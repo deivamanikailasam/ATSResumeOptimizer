@@ -4,7 +4,11 @@ from pathlib import Path
 from typing import Callable
 
 from ats_resume_optimizer.job_description import get_job_description
-from ats_resume_optimizer.llm import extract_title_and_company, optimize_until_target
+from ats_resume_optimizer.llm import (
+    extract_jd_keywords,
+    extract_title_and_company,
+    optimize_until_target,
+)
 from ats_resume_optimizer.pdf_export import html_to_pdf
 from ats_resume_optimizer.resume import extract_resume_text
 from ats_resume_optimizer.templates import render_resume
@@ -20,21 +24,36 @@ def optimize_resume(
     primary_color: str = "#2563eb",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> dict:
     """Run the full optimization pipeline and return cached-friendly results.
 
-    Returns a dict with keys: content_html, job_title, company.
+    Returns a dict with keys: content_html, job_title, company, jd_keywords.
     """
+    if on_status:
+        on_status("Extracting resume text...")
     resume_text = extract_resume_text(base_resume_pdf)
+
+    if on_status:
+        on_status("Loading job description...")
     job_description = get_job_description(jd_text=jd_text, jd_url=jd_url)
 
+    if on_status:
+        on_status("Analyzing job description and extracting keywords...")
+    jd_keywords = extract_jd_keywords(job_description, api_key=api_key)
+
+    if on_status:
+        on_status("Extracting job title and company...")
     job_title, company = extract_title_and_company(
         job_description, api_key=api_key
     )
 
+    if on_status:
+        on_status("Starting ATS optimization loop...")
     best_result = optimize_until_target(
         resume_text=resume_text,
         jd_text=job_description,
+        jd_keywords=jd_keywords,
         target_score=target_score,
         max_iterations=max_iterations,
         primary_color=primary_color,
@@ -46,6 +65,7 @@ def optimize_resume(
         "content_html": best_result["tailored_resume_html"],
         "job_title": job_title,
         "company": company,
+        "jd_keywords": jd_keywords,
     }
 
 
@@ -73,6 +93,7 @@ def run_resume_agent(
     primary_color: str = "#2563eb",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> Path:
     """Load resume, get JD, optimize for ATS, render with template, and save PDF.
 
@@ -87,6 +108,7 @@ def run_resume_agent(
         primary_color=primary_color,
         api_key=api_key,
         on_iteration=on_iteration,
+        on_status=on_status,
     )
 
     return export_resume_pdf(

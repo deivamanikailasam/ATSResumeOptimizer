@@ -11,18 +11,51 @@ from ats_resume_optimizer.templates import get_template_choices
 def _print_iteration(data: dict) -> None:
     i = data["iteration"]
     score = data["ats_score"]
+    verified_score = data.get("verified_score")
     improvements = data["improvements"]
+    strategies = data.get("strategies", [])
+    verification = data.get("verification")
 
     resolved = [f"[+] {imp['keyword']}" for imp in improvements if imp["resolved"]]
     pending = [imp["keyword"] for imp in improvements if not imp["resolved"]]
 
-    parts = [f"Iteration {i} | Score: {score}/100"]
-    if resolved:
-        parts.append("  ".join(resolved))
-    if pending:
-        parts.append(f"Missing: {', '.join(pending)}")
+    parts = [f"Iteration {i} | ATS Score: {score}/100"]
+
+    if verified_score is not None and verification:
+        parts.append(
+            f"Verified: {verified_score}% "
+            f"({verification['found_keywords']}/{verification['total_keywords']})"
+        )
+        if verification.get("must_have_total", 0) > 0:
+            parts.append(
+                f"Must-haves: {verification['must_have_score']}% "
+                f"({verification['must_have_found']}/{verification['must_have_total']})"
+            )
 
     print(" | ".join(parts))
+
+    if strategies:
+        applied = [s["strategy"] for s in strategies if s.get("applied")]
+        if applied:
+            print(f"  Strategies: {', '.join(applied)}")
+
+    if resolved:
+        print(f"  Resolved: {'  '.join(resolved)}")
+    if pending:
+        if verification:
+            must_have = verification.get("missing_must_have", [])
+            preferred = verification.get("missing_preferred", [])
+            if must_have:
+                print(f"  Must-have missing: {', '.join(must_have)}")
+            if preferred:
+                print(f"  Preferred missing: {', '.join(preferred)}")
+            other = [kw for kw in pending if kw not in must_have and kw not in preferred]
+            if other:
+                print(f"  Other missing: {', '.join(other)}")
+        else:
+            print(f"  Missing: {', '.join(pending)}")
+
+    print()
 
 
 def main() -> None:
@@ -64,6 +97,7 @@ def main() -> None:
         template_id=args.template,
         primary_color=args.color,
         on_iteration=_print_iteration,
+        on_status=lambda msg: print(f"  {msg}"),
     )
     print(f"\nOptimized resume saved to: {output_pdf}")
 

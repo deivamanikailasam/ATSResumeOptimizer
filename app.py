@@ -305,22 +305,63 @@ if run_button:
     def on_iteration(data: dict) -> None:
         i = data["iteration"]
         score = data["ats_score"]
+        verified_score = data.get("verified_score")
         improvements = data["improvements"]
+        strategies = data.get("strategies", [])
+        verification = data.get("verification")
         changes_summary = data.get("changes_summary", "")
 
         resolved = [imp["keyword"] for imp in improvements if imp["resolved"]]
         pending = [imp["keyword"] for imp in improvements if not imp["resolved"]]
 
-        parts = [f"**Iteration {i}** — Score: **{score}**/100"]
-        if resolved:
-            resolved_str = "  ".join(f"✅ {kw}" for kw in resolved)
-            parts.append(resolved_str)
-        if pending:
-            parts.append(f"⬜ Missing: {', '.join(pending)}")
-        if score >= target_score:
-            parts.append("🎯 **Target reached!**")
+        # Score header with verified score
+        score_parts = [f"**Iteration {i}** — ATS Score: **{score}**/100"]
+        if verified_score is not None and verification:
+            score_parts.append(
+                f"Verified: **{verified_score}%** "
+                f"({verification['found_keywords']}/{verification['total_keywords']})"
+            )
+            if verification.get("must_have_total", 0) > 0:
+                score_parts.append(
+                    f"Must-haves: **{verification['must_have_score']}%** "
+                    f"({verification['must_have_found']}/{verification['must_have_total']})"
+                )
 
-        header = " &nbsp;|&nbsp; ".join(parts)
+        header = " &nbsp;|&nbsp; ".join(score_parts)
+
+        # Strategies section
+        if strategies:
+            applied = [s["strategy"] for s in strategies if s.get("applied")]
+            if applied:
+                strat_str = " &nbsp; ".join(f"✅ {s}" for s in applied)
+                header += f"\n\n📋 **Strategies:** {strat_str}"
+
+        # Keywords section
+        if resolved or pending:
+            header += "\n\n🔑 **Keywords:**"
+            if resolved:
+                resolved_str = " &nbsp; ".join(f"✅ {kw}" for kw in resolved)
+                header += f"\n{resolved_str}"
+            if pending and verification:
+                must_have_missing = verification.get("missing_must_have", [])
+                preferred_missing = verification.get("missing_preferred", [])
+                if must_have_missing:
+                    header += f"\n⬜ **Must-have:** {', '.join(must_have_missing)}"
+                if preferred_missing:
+                    header += f"\n⬜ **Preferred:** {', '.join(preferred_missing)}"
+                other_missing = [
+                    kw for kw in pending
+                    if kw not in must_have_missing
+                    and kw not in preferred_missing
+                ]
+                if other_missing:
+                    header += f"\n⬜ **Other:** {', '.join(other_missing)}"
+            elif pending:
+                header += f"\n⬜ Missing: {', '.join(pending)}"
+
+        if score >= target_score:
+            header += "\n\n🎯 **Target reached!**"
+
         if changes_summary:
             header += f"\n\n> 📝 {changes_summary}"
 
@@ -328,7 +369,7 @@ if run_button:
         progress_placeholder.markdown("\n\n---\n\n".join(iteration_lines))
 
     with st.status("Optimizing resume…", expanded=True) as status:
-        st.write("Extracting resume text and analyzing job description…")
+        st.write("Starting optimization pipeline…")
         try:
             result = optimize_resume(
                 base_resume_pdf=base_resume_path,
@@ -339,6 +380,7 @@ if run_button:
                 primary_color=primary_color,
                 api_key=api_key_to_use or None,
                 on_iteration=on_iteration,
+                on_status=lambda msg: st.write(msg),
             )
         except Exception as e:
             status.update(label="Optimization failed", state="error")
