@@ -13,6 +13,27 @@ st.set_page_config(
     page_title="ATS Resume Optimizer", page_icon="📄", layout="centered"
 )
 
+
+# ── Disk cleanup helpers ─────────────────────────────────────────────────────
+
+def _cleanup_generated_pdfs():
+    """Remove all files from the generated-PDF output directory."""
+    if OUTPUT_DIR.exists():
+        for f in OUTPUT_DIR.iterdir():
+            if f.is_file():
+                f.unlink(missing_ok=True)
+
+
+def _cleanup_uploaded_resume():
+    """Remove the uploaded resume file from disk."""
+    (RESUME_DIR / "uploaded_resume.pdf").unlink(missing_ok=True)
+
+
+if "_session_initialized" not in st.session_state:
+    _cleanup_generated_pdfs()
+    _cleanup_uploaded_resume()
+    st.session_state["_session_initialized"] = True
+
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 st.sidebar.header("⚙️ Configuration")
@@ -34,17 +55,105 @@ max_iterations = st.sidebar.number_input(
 
 st.sidebar.divider()
 
-use_default_resume = st.sidebar.checkbox(
-    "Use default resume (memory/docs)", value=True
-)
-
-uploaded_resume = None
-if not use_default_resume:
-    uploaded_resume = st.sidebar.file_uploader("Upload resume PDF", type=["pdf"])
+uploaded_resume = st.sidebar.file_uploader("Upload base resume PDF", type=["pdf"])
 
 # ── Main area ────────────────────────────────────────────────────────────────
 
-st.title("📄 AI ATS Resume Optimizer")
+@st.dialog("How to Use This App", width="large")
+def _show_help():
+    st.markdown(
+        """
+#### 1. Add Your OpenAI API Key
+- In the **sidebar** on the left, find the **OpenAI API key** field.
+- Paste your API key (starts with `sk-…`).
+- Alternatively, create a `.env` file in the project root with:
+  ```
+  OPENAI_API_KEY=sk-your-key-here
+  ```
+- The key is required to power the AI optimization (uses GPT-4o-mini).
+
+---
+
+#### 2. Upload Your Base Resume
+- In the sidebar, click **Upload base resume PDF** and select your current resume.
+- This is the starting point the AI will optimize from.
+
+---
+
+#### 3. Set Optimization Parameters
+- **Target ATS score** (slider, 70–100): the minimum ATS score the optimizer
+  will try to reach. Higher values mean more keyword optimization.
+- **Max optimization iterations** (1–10): how many refinement rounds the AI
+  can perform. More iterations give better results but take longer.
+
+---
+
+#### 4. Enter the Job Description
+- **Job URL**: paste the link to the job posting — the app will scrape the
+  description automatically (supports LinkedIn, Indeed, Greenhouse, Lever,
+  Workday, and more).
+- **Job description text**: paste the full job description directly.
+- You can provide either or both (pasted text takes precedence).
+
+---
+
+#### 5. Choose a Resume Theme & Accent Color
+- Pick from **40 premium templates** in the **Theme** dropdown.
+- Use the **Accent color** picker to customize the highlight color.
+- Click the **👁️ preview** button to see a live preview with sample data
+  before running the optimization.
+
+---
+
+#### 6. Optimize Your Resume
+- Click **🚀 Optimize Resume** to start the AI pipeline.
+- The app will:
+  1. Extract keywords from the job description.
+  2. Iteratively rewrite your resume to maximize ATS keyword coverage.
+  3. Show real-time progress — ATS score, verified keyword match, and
+     applied strategies per iteration.
+  4. Generate a polished PDF with your chosen theme.
+
+---
+
+#### 7. Download Your Optimized Resume
+- Once complete, click **⬇️ Download Optimized Resume (PDF)** to save
+  the file.
+- The filename is automatically derived from the job title and company.
+
+---
+
+#### 8. Re-export with a Different Style
+- After optimization, you can change the **Theme** or **Accent color** and
+  click **🎨 Re-export with Style** to generate a new PDF instantly —
+  without re-running the AI.
+
+---
+
+> **Tip:** Results persist across page refreshes during your session, so you
+> won't lose your optimized resume if you accidentally reload the page.
+"""
+    )
+
+st.markdown(
+    """<style>
+    [data-testid="stButton"] button p {
+        margin: 0;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
+col_title, col_help = st.columns([10, 0.6], vertical_alignment="bottom")
+with col_title:
+    st.title("📄 AI ATS Resume Optimizer")
+with col_help:
+    if st.button("❓", help="How to use this app", key="help_btn"):
+        _show_help()
 st.caption(
     "Upload your resume, paste a job description, pick a premium theme, "
     "and get an ATS-optimized PDF in seconds."
@@ -207,10 +316,9 @@ st.caption(f"**{selected_meta['name']}** — {selected_meta['description']}")
 def _compute_input_fingerprint() -> str:
     """Hash all non-style inputs so we can detect when cache must be cleared."""
     uploaded_id = ""
-    if not use_default_resume and uploaded_resume is not None:
+    if uploaded_resume is not None:
         uploaded_id = f"{uploaded_resume.name}:{uploaded_resume.size}"
     parts = [
-        str(use_default_resume),
         uploaded_id,
         jd_text.strip(),
         jd_url.strip(),
@@ -223,9 +331,12 @@ def _compute_input_fingerprint() -> str:
 current_fingerprint = _compute_input_fingerprint()
 
 if st.session_state.get("_opt_fingerprint") != current_fingerprint:
-    st.session_state.pop("_opt_content_html", None)
-    st.session_state.pop("_opt_job_title", None)
-    st.session_state.pop("_opt_company", None)
+    for _key in (
+        "_opt_content_html", "_opt_job_title", "_opt_company",
+        "_opt_status_log", "_opt_pdf_bytes", "_opt_pdf_name",
+        "_opt_success_msg",
+    ):
+        st.session_state.pop(_key, None)
     st.session_state["_opt_fingerprint"] = current_fingerprint
 
 has_cached = "_opt_content_html" in st.session_state
@@ -235,36 +346,44 @@ has_cached = "_opt_content_html" in st.session_state
 
 st.divider()
 
+_optimizing = st.session_state.get("_start_optimization", False)
+
 col_opt, col_export = st.columns(2)
 
 with col_opt:
-    run_button = st.button(
-        "🔄 Regenerate" if has_cached else "🚀 Optimize Resume",
-        type="primary",
-        use_container_width=True,
-    )
+    opt_area = st.empty()
+    if _optimizing:
+        run_button = False
+        opt_area.button(
+            "⏳ Optimizing…", disabled=True, type="primary",
+            use_container_width=True,
+        )
+    else:
+        run_button = opt_area.button(
+            "🔄 Regenerate" if has_cached else "🚀 Optimize Resume",
+            type="primary",
+            use_container_width=True,
+        )
 
 with col_export:
-    export_button = st.button(
-        "🎨 Re-export with Style",
-        use_container_width=True,
-        disabled=not has_cached,
-        help="Use cached optimized content with the current theme & color"
-        if has_cached
-        else "Optimize a resume first",
-    )
+    export_area = st.empty()
+    if run_button or _optimizing:
+        export_button = False
+    else:
+        export_button = export_area.button(
+            "🎨 Re-export with Style",
+            use_container_width=True,
+            disabled=not has_cached,
+            help="Use cached optimized content with the current theme & color"
+            if has_cached
+            else "Optimize a resume first",
+        )
 
 
 def _resolve_resume_path() -> Path | None:
     """Validate and return the resume path, or show errors and return None."""
-    if use_default_resume:
-        path = RESUME_DIR / "base_resume.pdf"
-        if not path.exists():
-            st.error(f"Default resume not found at: {path}")
-            return None
-        return path
     if not uploaded_resume:
-        st.error("Please upload a resume PDF or enable 'Use default resume'.")
+        st.error("Please upload a base resume PDF.")
         return None
     path = RESUME_DIR / "uploaded_resume.pdf"
     RESUME_DIR.mkdir(parents=True, exist_ok=True)
@@ -288,7 +407,9 @@ def _validate_common_inputs() -> str | None:
     return key or ""
 
 
-# ── Full optimization ────────────────────────────────────────────────────────
+results_area = st.empty()
+
+# ── Handle optimize / regenerate click → clear cache and rerun clean ─────────
 
 if run_button:
     api_key_to_use = _validate_common_inputs()
@@ -299,8 +420,32 @@ if run_button:
     if base_resume_path is None:
         st.stop()
 
-    progress_placeholder = st.empty()
-    iteration_lines: list[str] = []
+    for _key in (
+        "_opt_content_html", "_opt_job_title", "_opt_company",
+        "_opt_status_log", "_opt_pdf_bytes", "_opt_pdf_name",
+        "_opt_success_msg",
+    ):
+        st.session_state.pop(_key, None)
+
+    _cleanup_generated_pdfs()
+
+    st.session_state["_start_optimization"] = True
+    st.session_state["_opt_resume_path"] = str(base_resume_path)
+    st.session_state["_opt_api_key"] = api_key_to_use
+    st.rerun()
+
+# ── Full optimization (runs on the clean rerun) ──────────────────────────────
+
+if _optimizing:
+    st.session_state.pop("_start_optimization", None)
+    base_resume_path = Path(st.session_state.pop("_opt_resume_path"))
+    api_key_to_use = st.session_state.pop("_opt_api_key", "")
+
+    st.session_state["_opt_status_log"] = []
+
+    def _log_status(msg: str) -> None:
+        st.session_state["_opt_status_log"].append(("status", msg))
+        st.write(msg)
 
     def on_iteration(data: dict) -> None:
         i = data["iteration"]
@@ -314,7 +459,6 @@ if run_button:
         resolved = [imp["keyword"] for imp in improvements if imp["resolved"]]
         pending = [imp["keyword"] for imp in improvements if not imp["resolved"]]
 
-        # Score header with verified score
         score_parts = [f"**Iteration {i}** — ATS Score: **{score}**/100"]
         if verified_score is not None and verification:
             score_parts.append(
@@ -329,14 +473,12 @@ if run_button:
 
         header = " &nbsp;|&nbsp; ".join(score_parts)
 
-        # Strategies section
         if strategies:
             applied = [s["strategy"] for s in strategies if s.get("applied")]
             if applied:
                 strat_str = " &nbsp; ".join(f"✅ {s}" for s in applied)
                 header += f"\n\n📋 **Strategies:** {strat_str}"
 
-        # Keywords section
         if resolved or pending:
             header += "\n\n🔑 **Keywords:**"
             if resolved:
@@ -365,90 +507,132 @@ if run_button:
         if changes_summary:
             header += f"\n\n> 📝 {changes_summary}"
 
-        iteration_lines.append(header)
-        progress_placeholder.markdown("\n\n---\n\n".join(iteration_lines))
+        st.session_state["_opt_status_log"].append(("iteration", header))
+        st.markdown(header)
+        st.divider()
 
-    with st.status("Optimizing resume…", expanded=True) as status:
-        st.write("Starting optimization pipeline…")
-        try:
-            result = optimize_resume(
-                base_resume_pdf=base_resume_path,
-                jd_text=jd_text.strip() or None,
-                jd_url=jd_url.strip() or None,
-                target_score=target_score,
-                max_iterations=max_iterations,
-                primary_color=primary_color,
-                api_key=api_key_to_use or None,
-                on_iteration=on_iteration,
-                on_status=lambda msg: st.write(msg),
-            )
-        except Exception as e:
-            status.update(label="Optimization failed", state="error")
-            st.error(f"Error during optimization: {e}")
-            st.stop()
+    with results_area.container():
+        with st.status("Optimizing resume…", expanded=True) as status:
+            _log_status("Starting optimization pipeline…")
+            try:
+                result = optimize_resume(
+                    base_resume_pdf=base_resume_path,
+                    jd_text=jd_text.strip() or None,
+                    jd_url=jd_url.strip() or None,
+                    target_score=target_score,
+                    max_iterations=max_iterations,
+                    primary_color=primary_color,
+                    api_key=api_key_to_use or None,
+                    on_iteration=on_iteration,
+                    on_status=_log_status,
+                )
+            except Exception as e:
+                status.update(label="Optimization failed", state="error")
+                st.error(f"Error during optimization: {e}")
+                st.stop()
 
-        status.update(label="✅ Optimization complete!", state="complete")
+            _log_status("Generating PDF…")
+            try:
+                output_pdf_path = export_resume_pdf(
+                    content_html=result["content_html"],
+                    template_id=selected_template_id,
+                    primary_color=primary_color,
+                    job_title=result["job_title"],
+                    company=result["company"],
+                )
+            except Exception as e:
+                status.update(label="PDF export failed", state="error")
+                st.error(f"Error generating PDF: {e}")
+                st.stop()
 
-    st.session_state["_opt_content_html"] = result["content_html"]
-    st.session_state["_opt_job_title"] = result["job_title"]
-    st.session_state["_opt_company"] = result["company"]
-    st.session_state["_opt_fingerprint"] = current_fingerprint
+            status.update(label="✅ Optimization complete!", state="complete")
 
-    with st.status("Generating PDF…") as pdf_status:
-        try:
-            output_pdf_path = export_resume_pdf(
-                content_html=result["content_html"],
-                template_id=selected_template_id,
-                primary_color=primary_color,
-                job_title=result["job_title"],
-                company=result["company"],
-            )
-        except Exception as e:
-            pdf_status.update(label="PDF export failed", state="error")
-            st.error(f"Error generating PDF: {e}")
-            st.stop()
-        pdf_status.update(label="✅ PDF ready!", state="complete")
+        st.session_state["_opt_content_html"] = result["content_html"]
+        st.session_state["_opt_job_title"] = result["job_title"]
+        st.session_state["_opt_company"] = result["company"]
+        st.session_state["_opt_fingerprint"] = current_fingerprint
 
-    st.success(f"Resume optimized! Saved to: **{output_pdf_path.name}**")
-    with open(output_pdf_path, "rb") as f:
-        pdf_bytes = f.read()
-    st.download_button(
-        label="⬇️ Download Optimized Resume (PDF)",
-        data=pdf_bytes,
-        file_name=output_pdf_path.name,
-        mime="application/pdf",
-        type="primary",
-    )
+        with open(output_pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        st.session_state["_opt_pdf_bytes"] = pdf_bytes
+        st.session_state["_opt_pdf_name"] = output_pdf_path.name
+        st.session_state["_opt_success_msg"] = (
+            f"Resume optimized! Saved to: **{output_pdf_path.name}**"
+        )
+
+        st.success(st.session_state["_opt_success_msg"])
+        st.download_button(
+            label="⬇️ Download Optimized Resume (PDF)",
+            data=pdf_bytes,
+            file_name=output_pdf_path.name,
+            mime="application/pdf",
+            type="primary",
+        )
 
 # ── Re-export with new style (cached) ────────────────────────────────────────
 
-if export_button and has_cached:
+elif export_button and has_cached:
+    export_area.button(
+        "⏳ Exporting…", disabled=True, use_container_width=True,
+    )
+
     content_html = st.session_state["_opt_content_html"]
     job_title = st.session_state["_opt_job_title"]
     company = st.session_state["_opt_company"]
 
-    with st.status("Generating PDF with new style…") as pdf_status:
-        try:
-            output_pdf_path = export_resume_pdf(
-                content_html=content_html,
-                template_id=selected_template_id,
-                primary_color=primary_color,
-                job_title=job_title,
-                company=company,
-            )
-        except Exception as e:
-            pdf_status.update(label="PDF export failed", state="error")
-            st.error(f"Error generating PDF: {e}")
-            st.stop()
-        pdf_status.update(label="✅ PDF ready!", state="complete")
+    with results_area.container():
+        with st.spinner("Generating PDF with new style…"):
+            try:
+                output_pdf_path = export_resume_pdf(
+                    content_html=content_html,
+                    template_id=selected_template_id,
+                    primary_color=primary_color,
+                    job_title=job_title,
+                    company=company,
+                )
+            except Exception as e:
+                st.error(f"Error generating PDF: {e}")
+                st.stop()
 
-    st.success(f"PDF re-exported with new style! Saved to: **{output_pdf_path.name}**")
-    with open(output_pdf_path, "rb") as f:
-        pdf_bytes = f.read()
-    st.download_button(
-        label="⬇️ Download Optimized Resume (PDF)",
-        data=pdf_bytes,
-        file_name=output_pdf_path.name,
-        mime="application/pdf",
-        type="primary",
-    )
+        with open(output_pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        st.session_state["_opt_pdf_bytes"] = pdf_bytes
+        st.session_state["_opt_pdf_name"] = output_pdf_path.name
+        st.session_state["_opt_success_msg"] = (
+            f"PDF re-exported with new style! Saved to: **{output_pdf_path.name}**"
+        )
+
+        st.success(st.session_state["_opt_success_msg"])
+        st.download_button(
+            label="⬇️ Download Optimized Resume (PDF)",
+            data=pdf_bytes,
+            file_name=output_pdf_path.name,
+            mime="application/pdf",
+            type="primary",
+        )
+
+# ── Persist results across reruns (e.g. after download click) ────────────────
+
+else:
+    with results_area.container():
+        cached_log = st.session_state.get("_opt_status_log")
+        if cached_log:
+            with st.status(
+                "✅ Optimization complete!", state="complete", expanded=False
+            ):
+                for entry_type, content in cached_log:
+                    if entry_type == "status":
+                        st.write(content)
+                    else:
+                        st.markdown(content)
+                        st.divider()
+        if "_opt_success_msg" in st.session_state:
+            st.success(st.session_state["_opt_success_msg"])
+        if "_opt_pdf_bytes" in st.session_state:
+            st.download_button(
+                label="⬇️ Download Optimized Resume (PDF)",
+                data=st.session_state["_opt_pdf_bytes"],
+                file_name=st.session_state["_opt_pdf_name"],
+                mime="application/pdf",
+                type="primary",
+            )

@@ -30,6 +30,9 @@ An AI-powered resume optimization tool that tailors your resume to specific job 
 - **Dual Interface** — Use the Streamlit web UI for an interactive experience, or the CLI for scripting and automation.
 - **Job URL Scraping** — Paste a job listing URL and the tool fetches and parses the description automatically. Supports Greenhouse, Lever, Workday, LinkedIn, Indeed, and generic job pages.
 - **Smart Caching** — Change theme or color without re-running the AI; re-export instantly from cached results.
+- **Persistent Results** — Optimization results, status log, and PDF download button persist across Streamlit reruns.
+- **Clean Regeneration** — Regenerating fully clears the UI (no dimmed stale elements) and wipes generated PDFs from disk before starting fresh. Buttons show loading states during processing.
+- **Automatic Disk Cleanup** — Uploaded resumes and generated PDFs are automatically removed from disk on page reload, session restart, or new session start to prevent stale file accumulation.
 
 ## Architecture
 
@@ -150,9 +153,9 @@ Job Description ──► URL scraping (requests + BS4) or raw text
 
    Alternatively, enter the key directly in the Streamlit sidebar at runtime.
 
-6. **Place your base resume** (optional)
+6. **Prepare your resume**
 
-   Copy your resume PDF to `memory/docs/base_resume.pdf` for use as the default input. You can also upload a resume through the web UI.
+   Have your base resume PDF ready to upload through the web UI or pass via the CLI `--resume` flag.
 
 ## Usage
 
@@ -164,10 +167,11 @@ streamlit run app.py
 
 This launches a local web app where you can:
 
-1. Enter or paste a job description (or provide a job listing URL).
-2. Select a theme and accent color, with live preview.
-3. Click **Optimize Resume** to run the AI pipeline.
-4. Download the generated PDF.
+1. Upload your base resume PDF.
+2. Enter or paste a job description (or provide a job listing URL).
+3. Select a theme and accent color, with live preview.
+4. Click **Optimize Resume** to run the AI pipeline.
+5. Download the generated PDF.
 
 ### Command Line
 

@@ -35,12 +35,25 @@ The `memory/` directory is gitignored. It contains user-specific data (resumes a
 ```
 memory/
 └── docs/
-    ├── base_resume.pdf           ← Your default resume (place here manually)
-    ├── uploaded_resume.pdf       ← Created when uploading via Streamlit
+    ├── base_resume.pdf           ← Base resume (CLI --resume flag)
+    ├── uploaded_resume.pdf       ← Created when uploading via Streamlit (auto-cleaned)
     └── generated/
         ├── Senior_Engineer_Acme.pdf
-        └── ...                   ← Generated PDFs named by job title + company
+        └── ...                   ← Generated PDFs named by job title + company (auto-cleaned)
 ```
+
+### Automatic Disk Cleanup
+
+The Streamlit web UI automatically removes temporary files from disk to prevent stale data accumulation:
+
+| File(s) | Cleaned on session start | Cleaned on regenerate |
+|---|---|---|
+| `memory/docs/uploaded_resume.pdf` | Yes | No (needed for optimization) |
+| `memory/docs/generated/*.pdf` | Yes | Yes |
+
+**Session start** is detected by the absence of a `_session_initialized` flag in Streamlit session state. This triggers on page reload, browser tab close + reopen, and Streamlit server restart.
+
+> **Note:** The CLI (`python -m ats_resume_optimizer`) does not perform automatic cleanup. CLI users manage their own input and output files.
 
 ## Streamlit UI Settings
 
@@ -51,7 +64,7 @@ These options are configured in the sidebar at runtime:
 | OpenAI API key | — | — | API key (overrides `.env` if provided). |
 | Target ATS score | 95 | 70–100 | The optimization loop stops when this score is reached. |
 | Max iterations | 5 | 1–10 | Maximum number of LLM refinement passes. |
-| Use default resume | Checked | — | Use `memory/docs/base_resume.pdf`. Uncheck to upload. |
+| Upload base resume PDF | — | — | Upload your resume PDF via the sidebar file uploader. |
 
 ### Main Area Settings
 

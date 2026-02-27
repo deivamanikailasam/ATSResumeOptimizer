@@ -34,9 +34,6 @@ playwright install chromium
 # Create environment file
 echo OPENAI_API_KEY=sk-... > .env
 
-# Place your resume
-# Copy your resume PDF to memory/docs/base_resume.pdf
-
 # Run the app
 streamlit run app.py
 ```
@@ -175,10 +172,11 @@ Streamlit uses WebSockets, so the `Upgrade` and `Connection` headers are require
 
 ### Storage
 
-- Generated PDFs are stored in `memory/docs/generated/`. In a multi-user deployment, consider:
+- Generated PDFs are stored in `memory/docs/generated/`. The Streamlit web UI automatically cleans up generated PDFs and uploaded resumes on each new session start (page reload, server restart, new browser tab). Generated PDFs are also cleaned on regenerate.
+- In a multi-user deployment, consider:
   - Using a unique subdirectory per session.
-  - Cleaning up generated files periodically.
   - Mounting a persistent volume (Docker) or object storage.
+  - Note that automatic cleanup only covers the single shared `generated/` directory. Concurrent users may interfere with each other's files.
 
 ### Monitoring
 

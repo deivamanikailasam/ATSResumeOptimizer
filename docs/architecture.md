@@ -44,7 +44,7 @@ ATS Resume Optimizer is a pipeline-based application that takes a resume PDF and
 
 | Module | Role |
 |---|---|
-| `app.py` | Streamlit web application. Manages UI state, input validation, session caching, theme preview, progress display (including strategies and verified scores), and file downloads. |
+| `app.py` | Streamlit web application. Manages UI state, input validation, session caching, theme preview, progress display (including strategies and verified scores), persistent result replay, file downloads, automatic disk cleanup, and button loading states. |
 | `__main__.py` | CLI entry point (`python -m ats_resume_optimizer`). Parses arguments with argparse and calls `run_resume_agent()`. Displays iteration progress with strategies and keyword categories. |
 | `agent.py` (root) | Thin CLI wrapper that imports and runs `__main__.main()`. |
 
@@ -198,11 +198,37 @@ The web UI implements input fingerprinting for cache efficiency:
 
 ```
 Input fingerprint = SHA-256(
-    use_default_resume | uploaded_file_id | jd_text | jd_url | target_score | max_iterations
+    uploaded_file_id | jd_text | jd_url | target_score | max_iterations
 )
 ```
 
-When the fingerprint changes, the cached optimization result is invalidated. When only the theme or color changes, the cached `content_html` is reused and only the rendering + PDF export steps are re-run (via the "Re-export with Style" button).
+When the fingerprint changes, cached optimization results are invalidated — this includes `content_html`, job title, company, status log, PDF bytes, filename, and success message. When only the theme or color changes, the cached `content_html` is reused and only the rendering + PDF export steps are re-run (via the "Re-export with Style" button).
+
+Results are persisted in session state across Streamlit reruns. The status log, success message, and PDF download button are replayed from `_opt_status_log`, `_opt_success_msg`, `_opt_pdf_bytes`, and `_opt_pdf_name` so users don't lose their results after interacting with the page (e.g., clicking the download button).
+
+### Two-Phase Regeneration
+
+When the user clicks **Regenerate**, the app uses a two-phase rerun to ensure a clean UI:
+
+1. **Phase 1 (button click):** All cached session state keys are cleared (including `_opt_content_html`, `_opt_job_title`, `_opt_company`), generated PDFs are deleted from disk, validated inputs are saved to session state, and `st.rerun()` is called.
+2. **Phase 2 (clean rerun):** The page re-renders with no cached content (nothing to show dimmed), the optimize button renders in a disabled "⏳ Optimizing…" state, and the optimization runs against a completely clean page.
+
+This eliminates Streamlit's default behavior of showing the previous render's elements in a dimmed/stale state during long-running operations.
+
+### Disk Cleanup
+
+The app automatically cleans up temporary files from disk:
+
+| Trigger | Generated PDFs (`memory/docs/generated/`) | Uploaded resume (`memory/docs/uploaded_resume.pdf`) |
+|---|---|---|
+| **Session start** (page load/reload/restart) | Cleared | Cleared |
+| **Regenerate click** | Cleared | Kept (needed for new optimization) |
+
+Cleanup is implemented via a `_session_initialized` flag in session state. Since session state is empty on page reload, restart, or new session, the flag's absence triggers cleanup on the first run of each session.
+
+### Button Loading States
+
+The optimize/regenerate and re-export buttons use `st.empty()` placeholders. During processing, the active button is replaced with a disabled loading-state button, and the other button is hidden entirely. The results area also uses `st.empty()` so that previous content is immediately replaced when the UI state changes.
 
 ## Key Design Decisions
 
