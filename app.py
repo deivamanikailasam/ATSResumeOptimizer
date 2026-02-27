@@ -7,7 +7,7 @@ import streamlit as st
 
 from ats_resume_optimizer.agent import optimize_resume, export_resume_pdf
 from ats_resume_optimizer.config import RESUME_DIR, OUTPUT_DIR
-from ats_resume_optimizer.templates import TEMPLATES, get_template_choices
+from ats_resume_optimizer.templates import TEMPLATES, get_template_choices, render_resume
 
 st.set_page_config(
     page_title="ATS Resume Optimizer", page_icon="📄", layout="centered"
@@ -65,7 +65,122 @@ st.markdown("### 🎨 Resume Style")
 template_choices = get_template_choices()
 template_labels = {t[1]: t[0] for t in template_choices}
 
-col_theme, col_color = st.columns([3, 1])
+_PREVIEW_CONTENT_HTML = """\
+<div class="resume-header">
+    <h1>Alexandra Chen</h1>
+    <div class="contact-info">
+        <span>alex.chen@email.com</span>
+        <span>(415) 987-6543</span>
+        <span>San Francisco, CA</span>
+        <span>linkedin.com/in/alexandrachen</span>
+    </div>
+</div>
+<div class="resume-section summary">
+    <h2>Professional Summary</h2>
+    <p>Results-driven Senior Software Engineer with 8+ years of experience building \
+scalable cloud-native applications. Proven track record of leading cross-functional \
+teams and delivering high-impact products that serve millions of users.</p>
+</div>
+<div class="resume-section skills">
+    <h2>Technical Skills</h2>
+    <div class="skills-grid">
+        <div class="skill-category">
+            <strong>Languages:</strong>
+            <span class="skill-tag">Python</span>
+            <span class="skill-tag">TypeScript</span>
+            <span class="skill-tag">Go</span>
+            <span class="skill-tag">SQL</span>
+        </div>
+        <div class="skill-category">
+            <strong>Frameworks:</strong>
+            <span class="skill-tag">React</span>
+            <span class="skill-tag">FastAPI</span>
+            <span class="skill-tag">Next.js</span>
+            <span class="skill-tag">Django</span>
+        </div>
+        <div class="skill-category">
+            <strong>Cloud & DevOps:</strong>
+            <span class="skill-tag">AWS</span>
+            <span class="skill-tag">Docker</span>
+            <span class="skill-tag">Kubernetes</span>
+            <span class="skill-tag">Terraform</span>
+        </div>
+    </div>
+</div>
+<div class="resume-section experience">
+    <h2>Professional Experience</h2>
+    <div class="experience-item">
+        <div class="item-header">
+            <h3>Senior Software Engineer</h3>
+            <span class="date">Jan 2022 – Present</span>
+        </div>
+        <div class="company">Stripe · San Francisco, CA</div>
+        <ul>
+            <li>Led architecture redesign of payment processing pipeline, reducing \
+latency by 40% and handling 2M+ daily transactions.</li>
+            <li>Mentored a team of 5 engineers and established code review standards \
+that cut production bugs by 30%.</li>
+        </ul>
+    </div>
+    <div class="experience-item">
+        <div class="item-header">
+            <h3>Software Engineer</h3>
+            <span class="date">Jun 2019 – Dec 2021</span>
+        </div>
+        <div class="company">Airbnb · San Francisco, CA</div>
+        <ul>
+            <li>Built real-time search ranking service using ML models, improving \
+booking conversion by 18%.</li>
+            <li>Designed and deployed microservices architecture serving 50M+ monthly \
+active users.</li>
+        </ul>
+    </div>
+</div>
+<div class="resume-section education">
+    <h2>Education</h2>
+    <div class="education-item">
+        <div class="item-header">
+            <h3>M.S. Computer Science</h3>
+            <span class="date">2017 – 2019</span>
+        </div>
+        <div class="company">Stanford University · Stanford, CA</div>
+    </div>
+</div>
+<div class="resume-section certifications">
+    <h2>Certifications</h2>
+    <ul class="cert-list">
+        <li><strong>AWS Solutions Architect Professional</strong> – Amazon (2023)</li>
+        <li><strong>Certified Kubernetes Administrator</strong> – CNCF (2022)</li>
+    </ul>
+</div>
+"""
+
+
+@st.dialog("Theme Preview", width="large")
+def _show_theme_preview(template_id: str, color: str):
+    import streamlit.components.v1 as components
+
+    meta = TEMPLATES[template_id]
+    st.caption(f"**{meta['name']}** — {meta['description']}")
+    full_html = render_resume(template_id, _PREVIEW_CONTENT_HTML, color)
+    doc_style = """
+    <style>
+        html { background: #f0f0f0; }
+        body {
+            background: #fff;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 24px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+            border-radius: 4px;
+        }
+    </style>
+    """
+    full_html = full_html.replace("</head>", doc_style + "</head>", 1)
+    components.html(full_html, height=700, scrolling=True)
+
+
+col_theme, col_color, col_preview = st.columns([3, 1, 0.4])
 
 with col_theme:
     selected_label = st.selectbox(
@@ -77,6 +192,11 @@ with col_theme:
 
 with col_color:
     primary_color = st.color_picker("Accent color", value="#2563eb")
+
+with col_preview:
+    st.markdown("<div style='height: 26px'></div>", unsafe_allow_html=True)
+    if st.button("👁️", help="Preview this theme with sample data", key="preview_btn"):
+        _show_theme_preview(selected_template_id, primary_color)
 
 selected_meta = TEMPLATES[selected_template_id]
 st.caption(f"**{selected_meta['name']}** — {selected_meta['description']}")

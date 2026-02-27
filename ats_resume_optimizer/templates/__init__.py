@@ -12,6 +12,11 @@ from .midnight_luxe import TEMPLATE as midnight_luxe
 from .swiss_grid import TEMPLATE as swiss_grid
 from .coral_ribbon import TEMPLATE as coral_ribbon
 from .monograph import TEMPLATE as monograph
+from .sidebar_pro import TEMPLATE as sidebar_pro
+from .gradient_wave import TEMPLATE as gradient_wave
+from .art_deco import TEMPLATE as art_deco
+from .tokyo_metro import TEMPLATE as tokyo_metro
+from .neon_glass import TEMPLATE as neon_glass
 
 
 TEMPLATES = OrderedDict([
@@ -25,6 +30,11 @@ TEMPLATES = OrderedDict([
     ("swiss_grid", swiss_grid),
     ("coral_ribbon", coral_ribbon),
     ("monograph", monograph),
+    ("sidebar_pro", sidebar_pro),
+    ("gradient_wave", gradient_wave),
+    ("art_deco", art_deco),
+    ("tokyo_metro", tokyo_metro),
+    ("neon_glass", neon_glass),
 ])
 
 
