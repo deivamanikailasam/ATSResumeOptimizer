@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
                                 
 
+## [1.3.1] - 2026-02-28
+
+### Fixed
+
+- **PDF export on Streamlit Community Cloud** — Added `packages.txt` with the system-level libraries Chromium requires and auto-install of the Playwright Chromium binary on first PDF export. Resolves `BrowserType.launch: Executable doesn't exist` errors on cloud deployments where `playwright install` was never run.
+
 ## [1.3.0] - 2026-02-28
 
 ### Added

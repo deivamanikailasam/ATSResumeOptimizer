@@ -13,6 +13,25 @@ import tempfile
 from pathlib import Path
 
 _WORKER = Path(__file__).parent / "_pdf_worker.py"
+_chromium_ready = False
+
+
+def _ensure_chromium() -> None:
+    """Install Playwright Chromium if the binary is not already present."""
+    global _chromium_ready  # noqa: PLW0603
+    if _chromium_ready:
+        return
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Playwright browser install failed (exit {result.returncode}):\n"
+            f"{result.stderr}"
+        )
+    _chromium_ready = True
 
 # Page-break CSS injected into every resume for print safety
 _PAGE_BREAK_CSS = """\
@@ -65,6 +84,7 @@ def html_to_pdf(html: str, output_path: Path) -> None:
     conflicts with Streamlit's asyncio loop on Windows.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_chromium()
     enhanced_html = _inject_page_break_css(html)
 
     tmp = tempfile.NamedTemporaryFile(

@@ -122,7 +122,7 @@ docker compose down
 3. Set the main file path to `app.py`.
 4. Add `OPENAI_API_KEY` to the app's **Secrets** in the Streamlit dashboard.
 
-> **Note:** Playwright requires Chromium system dependencies that may not be available on all Streamlit Cloud environments. If PDF export fails, consider an alternative hosting platform.
+The repository includes a `packages.txt` that installs the system-level libraries Chromium needs. The app automatically downloads the Playwright Chromium binary on the first PDF export, so no extra setup is required.
 
 ## Environment Variables in Production
 
