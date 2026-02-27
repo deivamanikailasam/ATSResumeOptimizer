@@ -17,6 +17,31 @@ from .gradient_wave import TEMPLATE as gradient_wave
 from .art_deco import TEMPLATE as art_deco
 from .tokyo_metro import TEMPLATE as tokyo_metro
 from .neon_glass import TEMPLATE as neon_glass
+from .ivory_press import TEMPLATE as ivory_press
+from .blueprint import TEMPLATE as blueprint
+from .aurora_borealis import TEMPLATE as aurora_borealis
+from .terracotta import TEMPLATE as terracotta
+from .brushstroke import TEMPLATE as brushstroke
+from .obsidian_gold import TEMPLATE as obsidian_gold
+from .marble_hall import TEMPLATE as marble_hall
+from .vintage_typewriter import TEMPLATE as vintage_typewriter
+from .emerald_dusk import TEMPLATE as emerald_dusk
+from .lavender_haze import TEMPLATE as lavender_haze
+from .copper_forge import TEMPLATE as copper_forge
+from .paper_cut import TEMPLATE as paper_cut
+from .ink_wash import TEMPLATE as ink_wash
+from .sahara_dune import TEMPLATE as sahara_dune
+from .glacier_blue import TEMPLATE as glacier_blue
+from .crimson_tide import TEMPLATE as crimson_tide
+from .bamboo_zen import TEMPLATE as bamboo_zen
+from .polaris_star import TEMPLATE as polaris_star
+from .rosewood import TEMPLATE as rosewood
+from .gazette import TEMPLATE as gazette
+from .slate_mosaic import TEMPLATE as slate_mosaic
+from .vintage_wine import TEMPLATE as vintage_wine
+from .origami import TEMPLATE as origami
+from .carbon_fiber import TEMPLATE as carbon_fiber
+from .sunset_boulevard import TEMPLATE as sunset_boulevard
 
 
 TEMPLATES = OrderedDict([
@@ -35,6 +60,31 @@ TEMPLATES = OrderedDict([
     ("art_deco", art_deco),
     ("tokyo_metro", tokyo_metro),
     ("neon_glass", neon_glass),
+    ("ivory_press", ivory_press),
+    ("blueprint", blueprint),
+    ("aurora_borealis", aurora_borealis),
+    ("terracotta", terracotta),
+    ("brushstroke", brushstroke),
+    ("obsidian_gold", obsidian_gold),
+    ("marble_hall", marble_hall),
+    ("vintage_typewriter", vintage_typewriter),
+    ("emerald_dusk", emerald_dusk),
+    ("lavender_haze", lavender_haze),
+    ("copper_forge", copper_forge),
+    ("paper_cut", paper_cut),
+    ("ink_wash", ink_wash),
+    ("sahara_dune", sahara_dune),
+    ("glacier_blue", glacier_blue),
+    ("crimson_tide", crimson_tide),
+    ("bamboo_zen", bamboo_zen),
+    ("polaris_star", polaris_star),
+    ("rosewood", rosewood),
+    ("gazette", gazette),
+    ("slate_mosaic", slate_mosaic),
+    ("vintage_wine", vintage_wine),
+    ("origami", origami),
+    ("carbon_fiber", carbon_fiber),
+    ("sunset_boulevard", sunset_boulevard),
 ])
 
 
