@@ -26,7 +26,7 @@ def _render(content_html: str, primary_color: str) -> str:
 <style>
 @page {{
     size: A4;
-    margin: 12mm 14mm;
+    margin: 10mm 3mm;
 }}
 
 *, *::before, *::after {{
