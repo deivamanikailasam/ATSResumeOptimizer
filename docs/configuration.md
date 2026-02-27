@@ -82,11 +82,34 @@ Configured in `ats_resume_optimizer/llm.py`:
 
 | Setting | Value | Location | Description |
 |---|---|---|---|
-| Model | `gpt-4o-mini` | `optimize_resume_once()`, `extract_title_and_company()` | OpenAI chat model used for all calls. |
-| Temperature | `0.3` | `optimize_resume_once()` | Controls output randomness. Low value for consistent, focused output. |
-| Temperature (extraction) | `0.0` | `extract_title_and_company()` | Deterministic for structured extraction. |
+| Model | `gpt-4o-mini` | All LLM functions | OpenAI chat model used for all calls. |
+| Temperature (optimization) | `0.2` | `optimize_resume_once()` | Low value for deterministic, consistent ATS optimization output. |
+| Temperature (JD extraction) | `0.0` | `extract_jd_keywords()` | Deterministic for structured keyword extraction. |
+| Temperature (title extraction) | `0.0` | `extract_title_and_company()` | Deterministic for structured field extraction. |
+
+The optimization pipeline makes the following LLM calls per run:
+
+| Call | Function | Purpose |
+|---|---|---|
+| 1 | `extract_jd_keywords()` | Extract structured, prioritized keywords from the JD. |
+| 2 | `extract_title_and_company()` | Extract job title and company for the output filename. |
+| 3–N | `optimize_resume_once()` | Iterative optimization (1 to `max_iterations` calls). |
 
 To use a different model, modify the `model` parameter in `llm.py` or pass it through the `optimize_until_target()` function.
+
+## ATS Scoring Rubric
+
+The LLM follows this rubric when calculating `ats_score`:
+
+| Component | Weight | Description |
+|---|---|---|
+| Keyword Match | 40% | Percentage of must-have JD keywords present in the resume. |
+| Contextual Relevance | 25% | Keywords embedded in achievement-based contexts, not just listed. |
+| Section Completeness | 15% | All standard ATS sections present and properly structured. |
+| Job Title Alignment | 10% | Summary/header matches the JD's target job title. |
+| Experience Alignment | 10% | Resume reflects the required years and experience level. |
+
+Additionally, a **programmatic verified score** is computed after each iteration by checking actual keyword presence in the generated HTML against the pre-extracted JD keywords. This verified score is used for best-result selection.
 
 ## PDF Export Configuration
 

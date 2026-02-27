@@ -22,7 +22,7 @@ Complete reference for all public modules, functions, and constants in the `ats_
 
 ## `ats_resume_optimizer.agent`
 
-Orchestration module — composes extraction, optimization, rendering, and export.
+Orchestration module — composes extraction, JD keyword analysis, optimization, rendering, and export.
 
 ### `optimize_resume()`
 
@@ -36,10 +36,11 @@ def optimize_resume(
     primary_color: str = "#2563eb",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> dict
 ```
 
-Run the full optimization pipeline without exporting to PDF.
+Run the full optimization pipeline without exporting to PDF. Internally calls `extract_jd_keywords()` for structured keyword extraction, `extract_title_and_company()` for metadata, and `optimize_until_target()` for iterative optimization with programmatic verification.
 
 **Parameters:**
 
@@ -52,7 +53,8 @@ Run the full optimization pipeline without exporting to PDF.
 | `max_iterations` | `int` | `5` | Maximum optimization iterations. |
 | `primary_color` | `str` | `"#2563eb"` | Accent color hex code. |
 | `api_key` | `str \| None` | `None` | OpenAI API key (falls back to env). |
-| `on_iteration` | `Callable` | `None` | Callback invoked after each iteration. |
+| `on_iteration` | `Callable` | `None` | Callback invoked after each iteration (see below). |
+| `on_status` | `Callable` | `None` | Callback invoked with progress messages (e.g., `"Extracting keywords from job description..."`). |
 
 **Returns:** `dict` with keys:
 
@@ -61,6 +63,7 @@ Run the full optimization pipeline without exporting to PDF.
 | `content_html` | `str` | Optimized resume as semantic HTML. |
 | `job_title` | `str` | Extracted job title. |
 | `company` | `str` | Extracted company name. |
+| `jd_keywords` | `dict` | Structured keywords extracted from the JD (see `extract_jd_keywords()`). |
 
 ---
 
@@ -105,6 +108,7 @@ def run_resume_agent(
     primary_color: str = "#2563eb",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> Path
 ```
 
@@ -118,13 +122,18 @@ Convenience function that runs `optimize_resume()` followed by `export_resume_pd
 
 ## `ats_resume_optimizer.llm`
 
-OpenAI client management, prompt construction, and optimization logic.
+OpenAI client management, prompt construction, keyword extraction, programmatic verification, and optimization logic.
 
 ### Constants
 
 | Name | Type | Description |
 |---|---|---|
-| `SYSTEM_PROMPT` | `str` | System message defining the LLM's role as an ATS expert and resume writer. |
+| `SYSTEM_PROMPT` | `str` | System message defining the LLM's role with research-backed ATS optimization rules covering keyword strategy, job title alignment, skills optimization, experience bullets, and formatting. |
+| `ATS_STRATEGIES` | `list[str]` | The 14 named ATS optimization strategies tracked across iterations. |
+
+**`ATS_STRATEGIES` values:**
+
+`"Job Title Mirroring"`, `"Keyword Frequency Optimization"`, `"Semantic Skill Clustering"`, `"Action Verb Matching"`, `"Experience Alignment"`, `"Soft Skills Integration"`, `"Acronym Expansion"`, `"STAR Method Bullets"`, `"Must-Have Prioritization"`, `"Contextual Keyword Embedding"`, `"Skills Ordering by Relevance"`, `"Exact Phrase Matching"`, `"Quantified Achievements"`, `"Date Format Consistency"`.
 
 ### `get_client()`
 
@@ -138,17 +147,73 @@ Return an OpenAI client. Uses the provided `api_key`, or falls back to the `OPEN
 
 ---
 
+### `extract_jd_keywords()`
+
+```python
+def extract_jd_keywords(
+    jd_text: str,
+    model: str = "gpt-4o-mini",
+    api_key: str | None = None,
+) -> dict
+```
+
+Extract structured, prioritized keywords from a job description using a dedicated LLM call (temperature 0).
+
+**Returns:** `dict` with keys:
+
+| Key | Type | Description |
+|---|---|---|
+| `job_title` | `str` | Exact job title from the posting. |
+| `required_hard_skills` | `list[str]` | Mandatory technical skills, tools, technologies. |
+| `required_soft_skills` | `list[str]` | Required soft skills (leadership, communication, etc.). |
+| `preferred_skills` | `list[str]` | Nice-to-have / preferred skills. |
+| `required_experience` | `str` | Required years of experience (e.g., `"5+ years"`). |
+| `required_education` | `str` | Required education level. |
+| `key_responsibilities` | `list[str]` | Core responsibility phrases from the JD. |
+| `industry_terms` | `list[str]` | Industry-specific jargon and methodologies. |
+| `action_verbs` | `list[str]` | Specific action verbs from the JD. |
+| `certifications` | `list[str]` | Mentioned certifications or licenses. |
+
+---
+
+### `verify_keyword_coverage()`
+
+```python
+def verify_keyword_coverage(html_content: str, jd_keywords: dict) -> dict
+```
+
+Programmatically check which JD keywords actually appear in the generated resume HTML. Extracts plain text from the HTML and performs case-insensitive substring matching against all categorized keywords.
+
+**Returns:** `dict` with keys:
+
+| Key | Type | Description |
+|---|---|---|
+| `by_category` | `dict[str, list[dict]]` | Per-category results. Each item: `{"keyword": str, "found": bool, "priority": str}`. |
+| `title_match` | `bool` | Whether the JD job title appears in the resume. |
+| `experience_match` | `bool` | Whether the JD's required experience years appear. |
+| `programmatic_score` | `int` | Overall keyword match percentage (0–100). |
+| `must_have_score` | `int` | Must-have keyword match percentage (0–100). |
+| `total_keywords` | `int` | Total keywords checked. |
+| `found_keywords` | `int` | Keywords found in the resume. |
+| `must_have_total` | `int` | Total must-have keywords. |
+| `must_have_found` | `int` | Must-have keywords found. |
+| `missing_must_have` | `list[str]` | Must-have keywords not found. |
+| `missing_preferred` | `list[str]` | Preferred keywords not found. |
+
+---
+
 ### `build_user_prompt()`
 
 ```python
 def build_user_prompt(
     resume_text: str,
     jd_text: str,
+    jd_keywords: dict | None = None,
     primary_color: str = "#2563eb",
 ) -> str
 ```
 
-Construct the initial user prompt containing the resume text, job description, HTML structure guide, and output format instructions.
+Construct the initial user prompt containing the resume text, job description, pre-extracted keyword checklist (with priority tags), HTML structure guide, ATS scoring rubric, and output format instructions (including `strategies_applied`).
 
 ---
 
@@ -162,9 +227,9 @@ def optimize_resume_once(
 ) -> dict
 ```
 
-Execute a single LLM chat completion call and parse the JSON response.
+Execute a single LLM chat completion call (temperature 0.2) and parse the JSON response.
 
-**Returns:** `dict` with keys `tailored_resume_html`, `ats_score`, `missing_keywords`, `changes_summary`.
+**Returns:** `dict` with keys `tailored_resume_html`, `ats_score`, `missing_keywords`, `strategies_applied`, `changes_summary`.
 
 **Raises:** `RuntimeError` if the response is not valid JSON.
 
@@ -176,6 +241,7 @@ Execute a single LLM chat completion call and parse the JSON response.
 def optimize_until_target(
     resume_text: str,
     jd_text: str,
+    jd_keywords: dict | None = None,
     target_score: int = 95,
     max_iterations: int = 5,
     primary_color: str = "#2563eb",
@@ -185,16 +251,19 @@ def optimize_until_target(
 ) -> dict
 ```
 
-Iteratively call the LLM, refining missing keywords, until the ATS score meets the target or max iterations is reached. Returns the best result across all iterations.
+Iteratively call the LLM, refining missing keywords with priority-aware prompts, until the ATS score meets the target or max iterations is reached. When `jd_keywords` is provided, runs programmatic verification after each iteration and uses the verified score for best-result selection. Tracks all seen keywords and applied strategies across iterations.
 
 **Callback `on_iteration` receives:**
 
 | Key | Type | Description |
 |---|---|---|
 | `iteration` | `int` | 1-based iteration number. |
-| `ats_score` | `int` | ATS score for this iteration. |
-| `missing_keywords` | `list[str]` | Keywords still missing. |
-| `improvements` | `list[dict]` | `[{"keyword": str, "resolved": bool}, ...]` — all keywords seen across iterations. |
+| `ats_score` | `int` | LLM-assessed ATS score for this iteration. |
+| `verified_score` | `int` | Programmatic keyword match percentage (same as `ats_score` if `jd_keywords` not available). |
+| `missing_keywords` | `list[str]` | Keywords still missing (from LLM response). |
+| `improvements` | `list[dict]` | `[{"keyword": str, "resolved": bool}, ...]` — all keywords seen across iterations with resolution status. |
+| `strategies` | `list[dict]` | `[{"strategy": str, "applied": bool}, ...]` — all strategies applied across iterations. |
+| `verification` | `dict \| None` | Full output of `verify_keyword_coverage()` (or `None` if `jd_keywords` not available). |
 | `changes_summary` | `str` | Summary of changes made in this iteration. |
 
 ---
@@ -209,7 +278,7 @@ def extract_title_and_company(
 ) -> tuple[str, str]
 ```
 
-Extract the job title and company name from job description text using a lightweight LLM call.
+Extract the job title and company name from job description text using a lightweight LLM call (temperature 0).
 
 **Returns:** `(job_title, company)` — defaults to `"UnknownRole"` / `"UnknownCompany"` on parse failure.
 
@@ -237,7 +306,7 @@ Extract all text from a resume PDF using `pypdf`.
 def fetch_jd_from_url(url: str) -> str
 ```
 
-Fetch a web page and extract job description text. Tries multiple HTML selectors (`<article>`, `.job-description`, `.description`, `<body>`) and returns the first match with 500+ characters.
+Fetch a web page (with browser User-Agent header) and extract job description text. Strips `script`, `style`, `nav`, `footer`, `header`, and `noscript` tags before parsing. Tries platform-specific selectors for Greenhouse, Lever, Workday, LinkedIn, Indeed, and generic HTML structures (`<article>`, `.job-description`, `.description`, `<main>`, `<body>`). Returns the first match with 500+ characters. EEO boilerplate paragraphs are stripped from the result.
 
 ---
 

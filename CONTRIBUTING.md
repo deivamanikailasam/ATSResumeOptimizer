@@ -31,10 +31,11 @@ Thank you for your interest in contributing to ATS Resume Optimizer. This guide 
 
 ```
 ats_resume_optimizer/
-├── agent.py              Orchestration pipeline
+├── agent.py              Orchestration pipeline (keyword extraction + optimization + export)
 ├── config.py             Path constants
-├── job_description.py    JD fetching (URL / text)
-├── llm.py                OpenAI prompts and optimization loop
+├── job_description.py    JD fetching (URL / text), boilerplate cleaning
+├── llm.py                OpenAI prompts, JD keyword extraction, keyword verification,
+│                          ATS scoring rubric, strategy tracking, optimization loop
 ├── pdf_export.py         HTML → PDF via Playwright
 ├── _pdf_worker.py        Subprocess Playwright worker
 ├── resume.py             PDF text extraction
@@ -90,11 +91,15 @@ See the [Template Authoring Guide](docs/templates.md) for step-by-step instructi
 
 ## Modifying LLM Prompts
 
-The system prompt and user prompt live in `ats_resume_optimizer/llm.py`. When modifying prompts:
+The system prompt, user prompt, refinement prompt, and ATS scoring rubric live in `ats_resume_optimizer/llm.py`. When modifying prompts:
 
 - Test with at least 3 different job descriptions across different industries.
-- Verify the output JSON structure remains valid.
+- Verify the output JSON structure remains valid (must include `tailored_resume_html`, `ats_score`, `missing_keywords`, `strategies_applied`, `changes_summary`).
 - Ensure ATS scores remain reasonable and the model does not hallucinate experience.
+- Verify that `strategies_applied` values match the names defined in `ATS_STRATEGIES`.
+- Check that programmatic verification (`verify_keyword_coverage()`) aligns with the LLM's self-assessed score — large discrepancies indicate prompt issues.
+- Ensure the refinement prompt preserves previously resolved keywords and respects must-have vs. preferred priority.
+- If adding new strategies, update the `ATS_STRATEGIES` list, `_STRATEGIES_LIST` prompt fragment, and the strategies table in `docs/architecture.md`.
 
 ## Reporting Issues
 

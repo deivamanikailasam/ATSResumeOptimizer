@@ -17,13 +17,18 @@ An AI-powered resume optimization tool that tailors your resume to specific job 
 ## Features
 
 - **AI-Driven Optimization** — Uses GPT-4o-mini to rewrite and tailor resume content to match job description keywords, phrasing, and requirements.
-- **Iterative Refinement** — Runs up to N optimization passes, tracking missing keywords and ATS score improvements until a target score is reached.
+- **Structured JD Analysis** — Pre-extracts keywords from the job description (required hard/soft skills, preferred skills, industry terms, action verbs, certifications) and categorizes them as must-have vs. preferred before optimization begins.
+- **14 ATS Optimization Strategies** — Applies research-backed strategies per iteration: Job Title Mirroring, Keyword Frequency Optimization, Semantic Skill Clustering, Action Verb Matching, Experience Alignment, Soft Skills Integration, Acronym Expansion, STAR Method Bullets, Must-Have Prioritization, Contextual Keyword Embedding, Skills Ordering by Relevance, Exact Phrase Matching, Quantified Achievements, and Date Format Consistency.
+- **Programmatic Keyword Verification** — After each iteration, programmatically checks the generated resume against all extracted JD keywords, producing a verified match percentage independent of the LLM's self-assessed score.
+- **Priority-Aware Refinement** — Must-have keywords receive highest priority with placement guidance (Summary + Skills + Experience). Refinement prompts warn if the job title or experience years are missing and instruct the model to preserve already-resolved keywords.
+- **ATS Scoring Rubric** — The LLM follows a defined rubric (40% keyword match, 25% contextual relevance, 15% section completeness, 10% title alignment, 10% experience alignment) for consistent, grounded scoring.
+- **Iterative Refinement** — Runs up to N optimization passes, tracking missing keywords, applied strategies, and both LLM and verified ATS scores until a target score is reached.
 - **37 Premium Themes** — Choose from a curated collection of professionally designed resume templates (Modern Minimal, Executive Classic, Neon Glass, Aurora Borealis, and more).
 - **Customizable Accent Color** — Pick any accent color; templates dynamically adapt their palette.
 - **Live Theme Preview** — Preview any theme with sample data before committing.
 - **PDF Export** — Generates print-ready A4 PDFs via headless Chromium (Playwright).
 - **Dual Interface** — Use the Streamlit web UI for an interactive experience, or the CLI for scripting and automation.
-- **Job URL Scraping** — Paste a job listing URL and the tool fetches and parses the description automatically.
+- **Job URL Scraping** — Paste a job listing URL and the tool fetches and parses the description automatically. Supports Greenhouse, Lever, Workday, LinkedIn, Indeed, and generic job pages.
 - **Smart Caching** — Change theme or color without re-running the AI; re-export instantly from cached results.
 
 ## Architecture
@@ -56,19 +61,38 @@ ats_resume_optimizer/
 ```
 Resume PDF ──► Text Extraction (pypdf)
                         │
-Job Description ──► URL scraping (requests + BeautifulSoup) or raw text
+Job Description ──► URL scraping (requests + BS4) or raw text
+                        │
+                        ▼
+              JD Keyword Extraction (LLM)
+              ├── Required hard/soft skills
+              ├── Preferred skills
+              ├── Industry terms, action verbs
+              └── Experience, education, certs
+                        │
+                        ▼
+              Title & Company Extraction (LLM)
                         │
                         ▼
               LLM Optimization Loop
               (GPT-4o-mini, up to N iterations)
+                  ┌─────┴─────┐
+                  │ Optimize   │◄── Keyword checklist
+                  │ with       │◄── ATS scoring rubric
+                  │ strategies │◄── 14 named strategies
+                  └─────┬─────┘
+                        │
+              Programmatic Verification
+              (keyword coverage check)
                         │
                   ┌─────┴─────┐
                   │  Score ≥   │── yes ──► Best Result
                   │  Target?   │
                   └─────┬─────┘
                         │ no
-                  Refine missing
-                  keywords & retry
+                  Priority-aware refinement
+                  (must-have vs preferred,
+                   preserve resolved keywords)
                         │
                         ▼
               Render HTML with Theme + Color
@@ -241,17 +265,19 @@ All file paths are configured in `ats_resume_optimizer/config.py`:
 ## How It Works
 
 1. **Text Extraction** — The base resume PDF is read with `pypdf` and its text content is extracted.
-2. **Job Description Parsing** — If a URL is provided, the page is fetched with `requests` and parsed with BeautifulSoup to extract the job description text. Direct text input is used as-is.
-3. **Title & Company Extraction** — A lightweight LLM call extracts the job title and company name from the job description for use in the output filename.
-4. **Iterative ATS Optimization** — The resume text and job description are sent to GPT-4o-mini with a specialized system prompt. The model returns:
+2. **Job Description Parsing** — If a URL is provided, the page is fetched with `requests` and parsed with BeautifulSoup using platform-specific selectors (Greenhouse, Lever, Workday, LinkedIn, Indeed, etc.). EEO boilerplate is stripped. Direct text input is used as-is.
+3. **JD Keyword Extraction** — A dedicated LLM call (`extract_jd_keywords()`) analyzes the job description and extracts structured, prioritized keyword data: required hard skills, required soft skills, preferred skills, experience requirements, education, key responsibilities, industry terms, action verbs, and certifications.
+4. **Title & Company Extraction** — A lightweight LLM call extracts the job title and company name for use in the output filename.
+5. **Iterative ATS Optimization** — The resume text, job description, and pre-extracted keyword checklist are sent to GPT-4o-mini with a research-backed system prompt. The model applies up to 14 named ATS strategies and returns:
    - Tailored resume HTML (using semantic class names matching the template system)
-   - An estimated ATS score (0–100)
-   - A list of missing/weak keywords
+   - An ATS score (0–100) based on a defined scoring rubric
+   - A list of still-missing keywords
+   - A list of strategies applied in this iteration
    - A summary of changes made
 
-   If the score is below the target, the missing keywords are fed back for refinement. This loop repeats until the score meets the target or max iterations is reached.
-5. **Template Rendering** — The optimized HTML content is wrapped in a full HTML document by the selected theme, which applies its CSS, typography, and layout.
-6. **PDF Generation** — The final HTML is rendered to an A4 PDF using Playwright's Chromium engine in a subprocess (to avoid event-loop conflicts with Streamlit).
+   After each iteration, the generated HTML is programmatically verified against all extracted JD keywords to produce an independent verified score. If the score is below the target, a priority-aware refinement prompt is sent — must-have keywords get explicit placement guidance, preferred keywords are added where the candidate has real experience, and already-resolved keywords are marked for preservation. The best result (by verified score) is tracked and returned.
+6. **Template Rendering** — The optimized HTML content is wrapped in a full HTML document by the selected theme, which applies its CSS, typography, and layout.
+7. **PDF Generation** — The final HTML is rendered to an A4 PDF using Playwright's Chromium engine in a subprocess (to avoid event-loop conflicts with Streamlit).
 
 ## Project Structure Details
 
