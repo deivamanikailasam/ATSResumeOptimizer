@@ -148,9 +148,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+
 col_title, col_help = st.columns([10, 0.6], vertical_alignment="bottom")
 with col_title:
-    st.title("📄 AI ATS Resume Optimizer")
+    st.markdown(
+        f'<h1 style="margin:0">📄 AI ATS Resume Optimizer'
+        f' <span style="font-size:0.4em;color:gray">v{_version}</span></h1>',
+        unsafe_allow_html=True,
+    )
 with col_help:
     if st.button("❓", help="How to use this app", key="help_btn"):
         _show_help()
