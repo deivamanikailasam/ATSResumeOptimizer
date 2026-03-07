@@ -1,21 +1,9 @@
 wget
 xvfb
-xdg-utils
-lsb-release
 libnss3
-libnspr4
 libasound2
+fonts-liberation
 libxss1
-libgconf-2-4
-libexpat1
+libgconf-service
 libfontconfig1
-libxdamage1
-libxfixes3
-libxrandr2
-libgbm1
-libdrm2
-libxcomposite1
-libxshmfence1
-libxkbcommon0
-libpcre3  # Explicit for glib compat
-libffi7   # Explicit fix
+libexpat1
