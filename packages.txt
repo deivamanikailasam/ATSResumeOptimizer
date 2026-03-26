@@ -4,6 +4,5 @@ libnss3
 libasound2
 fonts-liberation
 libxss1
-libgconf-service
 libfontconfig1
 libexpat1
