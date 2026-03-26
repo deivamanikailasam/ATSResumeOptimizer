@@ -21,6 +21,13 @@ def _ensure_chromium() -> None:
     global _chromium_ready  # noqa: PLW0603
     if _chromium_ready:
         return
+    # Attempt to install OS-level dependencies (needs root; silently ignored
+    # on hosts like Streamlit Cloud where packages.txt handles this instead).
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install-deps", "chromium"],
+        capture_output=True,
+        text=True,
+    )
     result = subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True,
