@@ -105,7 +105,7 @@ def render_resume(template_id: str, content_html: str, primary_color: str) -> st
 # produce.  Every template's CSS targets these same semantic class names.
 # ---------------------------------------------------------------------------
 
-CONTENT_STRUCTURE = """\
+_CORE_STRUCTURE = """\
 Generate the resume as HTML using **exactly** this structure.
 Do NOT include <html>, <head>, <body>, or <style> tags – only the inner content.
 Use the class names shown below so the selected theme CSS can style them.
@@ -181,3 +181,36 @@ Use the class names shown below so the selected theme CSS can style them.
     </ul>
 </div>
 """
+
+CONTENT_STRUCTURE = _CORE_STRUCTURE
+
+
+def build_content_structure(resume_analysis: dict | None = None) -> str:
+    """Build the HTML structure guide, dynamically adding extra sections
+    found in the candidate's original resume."""
+    if not resume_analysis or not resume_analysis.get("extra_sections"):
+        return _CORE_STRUCTURE
+
+    extra = resume_analysis["extra_sections"]
+    all_ids = ", ".join(resume_analysis.get("section_ids", []))
+
+    examples = []
+    for s in extra[:5]:
+        css_class = s["id"].replace("_", "-")
+        examples.append(
+            f'<div class="resume-section {css_class}">\n'
+            f'    <h2>{s["heading"]}</h2>\n'
+            f"    <!-- preserve content from original resume -->\n"
+            f"</div>"
+        )
+
+    extra_block = (
+        "\n\n**Additional sections detected in the original resume — "
+        "you MUST include these using the same pattern as above "
+        "(use `resume-section` class + a lowercase hyphenated identifier):**\n\n"
+        + "\n\n".join(examples)
+        + f"\n\nAll sections found in the original resume: {all_ids}"
+        + "\nDo NOT drop any sections present in the original resume."
+    )
+
+    return _CORE_STRUCTURE + extra_block

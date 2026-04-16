@@ -2,13 +2,21 @@
 
 from pathlib import Path
 
-from ats_resume_optimizer.agent import export_resume_pdf, optimize_resume, run_resume_agent
+from ats_resume_optimizer.agent import (
+    apply_resume_edit,
+    convert_resume,
+    export_resume_pdf,
+    optimize_resume,
+    run_resume_agent,
+)
 from ats_resume_optimizer.config import BASE_DIR, OUTPUT_DIR, RESUME_DIR
 
 __version__ = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()
 
 __all__ = [
     "__version__",
+    "apply_resume_edit",
+    "convert_resume",
     "export_resume_pdf",
     "optimize_resume",
     "run_resume_agent",

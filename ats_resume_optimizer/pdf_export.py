@@ -7,6 +7,7 @@ PDF generation runs in a subprocess to avoid event-loop conflicts with
 Streamlit's asyncio loop.
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -21,17 +22,21 @@ def _ensure_chromium() -> None:
     global _chromium_ready  # noqa: PLW0603
     if _chromium_ready:
         return
-    # Attempt to install OS-level dependencies (needs root; silently ignored
-    # on hosts like Streamlit Cloud where packages.txt handles this instead).
+
+    # Allow TLS downloads behind corporate proxies that use self-signed certs
+    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": "0"}
+
     subprocess.run(
         [sys.executable, "-m", "playwright", "install-deps", "chromium"],
         capture_output=True,
         text=True,
+        env=env,
     )
     result = subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -72,6 +77,32 @@ p, li {
 
 .skill-category {
     page-break-inside: avoid;
+}
+
+/* ── Generic fallback for extra/custom sections ────────────────────────── */
+.resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) {
+    margin-bottom: 17px;
+    page-break-inside: avoid;
+}
+
+.resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) h2 {
+    font-size: 10pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) ul {
+    padding-left: 16px;
+    margin-top: 3px;
+}
+
+.resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) li {
+    font-size: 10pt;
+    margin-bottom: 2.5px;
 }
 </style>
 """

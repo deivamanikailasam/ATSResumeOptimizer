@@ -5,14 +5,16 @@ from typing import Callable
 
 from ats_resume_optimizer.job_description import get_job_description
 from ats_resume_optimizer.llm import (
+    convert_resume_to_html,
+    edit_resume_html,
     extract_jd_keywords,
     extract_title_and_company,
     optimize_until_target,
 )
 from ats_resume_optimizer.pdf_export import html_to_pdf
-from ats_resume_optimizer.resume import extract_resume_text
+from ats_resume_optimizer.resume import analyze_resume_structure, extract_resume_text
 from ats_resume_optimizer.templates import render_resume
-from ats_resume_optimizer.utils import build_output_path
+from ats_resume_optimizer.utils import build_output_path, extract_name_from_html
 
 
 def optimize_resume(
@@ -20,7 +22,7 @@ def optimize_resume(
     jd_text: str | None = None,
     jd_url: str | None = None,
     target_score: int = 95,
-    max_iterations: int = 5,
+    max_iterations: int = 15,
     primary_color: str = "#2563eb",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
@@ -33,6 +35,10 @@ def optimize_resume(
     if on_status:
         on_status("Extracting resume text...")
     resume_text = extract_resume_text(base_resume_pdf)
+
+    if on_status:
+        on_status("Analyzing resume structure...")
+    resume_analysis = analyze_resume_structure(resume_text)
 
     if on_status:
         on_status("Loading job description...")
@@ -59,6 +65,7 @@ def optimize_resume(
         primary_color=primary_color,
         api_key=api_key,
         on_iteration=on_iteration,
+        resume_analysis=resume_analysis,
     )
 
     return {
@@ -69,16 +76,64 @@ def optimize_resume(
     }
 
 
+def convert_resume(
+    base_resume_pdf: Path,
+    primary_color: str = "#2563eb",
+    api_key: str | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> dict:
+    """Convert a resume PDF to structured HTML without ATS optimization.
+
+    Returns a dict with key: content_html.
+    """
+    if on_status:
+        on_status("Extracting resume text...")
+    resume_text = extract_resume_text(base_resume_pdf)
+
+    if on_status:
+        on_status("Analyzing resume structure...")
+    resume_analysis = analyze_resume_structure(resume_text)
+
+    if on_status:
+        on_status("Converting resume to HTML...")
+    content_html = convert_resume_to_html(
+        resume_text,
+        primary_color=primary_color,
+        api_key=api_key,
+        resume_analysis=resume_analysis,
+    )
+
+    return {"content_html": content_html}
+
+
+def apply_resume_edit(
+    content_html: str,
+    instruction: str,
+    edit_history: list[dict] | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """Apply a natural-language edit to the optimized resume content.
+
+    Returns a dict with keys: updated_html, changes_summary.
+    """
+    return edit_resume_html(
+        current_html=content_html,
+        instruction=instruction,
+        edit_history=edit_history,
+        api_key=api_key,
+    )
+
+
 def export_resume_pdf(
     content_html: str,
     template_id: str,
     primary_color: str,
-    job_title: str,
-    company: str,
+    company: str | None = None,
 ) -> Path:
     """Render cached content HTML with a template and export to PDF."""
     full_html = render_resume(template_id, content_html, primary_color)
-    output_path = build_output_path(job_title, company)
+    candidate_name = extract_name_from_html(content_html)
+    output_path = build_output_path(candidate_name, company=company)
     html_to_pdf(full_html, output_path)
     return output_path
 
@@ -88,7 +143,7 @@ def run_resume_agent(
     jd_text: str | None = None,
     jd_url: str | None = None,
     target_score: int = 95,
-    max_iterations: int = 5,
+    max_iterations: int = 15,
     template_id: str = "modern_minimal",
     primary_color: str = "#2563eb",
     api_key: str | None = None,
@@ -115,6 +170,5 @@ def run_resume_agent(
         content_html=result["content_html"],
         template_id=template_id,
         primary_color=primary_color,
-        job_title=result["job_title"],
-        company=result["company"],
+        company=result.get("company"),
     )

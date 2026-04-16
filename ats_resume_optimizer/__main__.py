@@ -19,18 +19,18 @@ def _print_iteration(data: dict) -> None:
     resolved = [f"[+] {imp['keyword']}" for imp in improvements if imp["resolved"]]
     pending = [imp["keyword"] for imp in improvements if not imp["resolved"]]
 
-    parts = [f"Iteration {i} | ATS Score: {score}/100"]
-
     if verified_score is not None and verification:
-        parts.append(
-            f"Verified: {verified_score}% "
+        parts = [
+            f"Iteration {i} | Keyword Match: {verified_score}% "
             f"({verification['found_keywords']}/{verification['total_keywords']})"
-        )
+        ]
         if verification.get("must_have_total", 0) > 0:
             parts.append(
                 f"Must-haves: {verification['must_have_score']}% "
                 f"({verification['must_have_found']}/{verification['must_have_total']})"
             )
+    else:
+        parts = [f"Iteration {i} | ATS Score: {score}/100"]
 
     print(" | ".join(parts))
 
@@ -74,7 +74,8 @@ def main() -> None:
         "--target-score", type=int, default=95, help="Target ATS score (default: 95)"
     )
     parser.add_argument(
-        "--max-iterations", type=int, default=5, help="Max optimization iterations (default: 5)"
+        "--max-iterations", type=int, default=15,
+        help="Safety limit for optimization iterations (default: 15, stops early on plateau)",
     )
     parser.add_argument(
         "--template",
