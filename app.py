@@ -1,6 +1,8 @@
 # app.py
 import hashlib
 import os
+import threading
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -47,8 +49,20 @@ api_key = st.sidebar.text_input(
     placeholder="sk-… (or set OPENAI_API_KEY in .env)",
     help="Required. Can also be set via OPENAI_API_KEY in a .env file.",
 )
+_env_key_set = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+if api_key.strip():
+    st.sidebar.caption("✅ API key entered")
+elif _env_key_set:
+    st.sidebar.caption("✅ Using OPENAI_API_KEY from environment")
+else:
+    st.sidebar.caption("⚠️ API key required to run the optimizer")
 
 uploaded_resume = st.sidebar.file_uploader("Upload base resume PDF", type=["pdf"])
+if uploaded_resume:
+    _size_kb = uploaded_resume.size // 1024
+    st.sidebar.caption(f"✅ {uploaded_resume.name} ({_size_kb} KB)")
+else:
+    st.sidebar.caption("ℹ️ Upload your base resume PDF to get started")
 
 # ── Main area — Header ──────────────────────────────────────────────────────
 
@@ -68,12 +82,16 @@ Tailor your resume for a specific job posting.
 
 1. Paste the **Job URL** or **Job description text** (or both).
 2. Pick a **Theme** and **Accent color**.
-3. Click **🚀 Optimize Resume** — the AI iteratively refines your
+3. **Strict Optimization** (default: on) — keeps all content 100% faithful
+   to your base resume. Uncheck to allow the AI broader creative latitude.
+4. Click **🚀 Optimize Resume** — the AI iteratively refines your
    resume to maximize ATS keyword coverage.
-4. **Download** the optimized PDF, or **Re-export** with a different
-   style without re-running the AI.
-5. Use the **Edit** section below the results to make further changes
-   in plain English.
+5. **Download** the optimized PDF using the green button that appears,
+   or **Re-export** with a different style without re-running the AI.
+6. Use the **Edit** section (scroll down after results appear) to make
+   further changes in plain English.
+7. After each edit, a **Download Current Resume** button appears
+   directly below the chat history — always up-to-date.
 
 ---
 
@@ -89,12 +107,15 @@ Edit your resume freely — no job description needed.
    - *"Remove the Projects section"*
 4. Click **✏️ Apply Edit** — the AI updates your resume and
    regenerates the PDF instantly.
-5. Use **↩️ Undo** to revert the last edit.
+5. The **Download Current Resume** button below the chat always
+   reflects the latest version of your resume.
+6. Use **↩️ Undo** to revert the last edit.
 
 ---
 
 > **Tip:** Results persist across page refreshes during your session.
 > Each tab maintains its own independent state.
+> Use **👁️ Preview** to see your resume without downloading.
 """
     )
 
@@ -252,6 +273,31 @@ def _show_theme_preview(template_id: str, color: str):
     components.html(full_html, height=700, scrolling=True)
 
 
+@st.dialog("Resume Preview", width="large")
+def _show_resume_preview(content_html: str, template_id: str, color: str):
+    """Show the rendered resume HTML in a scrollable dialog."""
+    import streamlit.components.v1 as components
+
+    meta = TEMPLATES[template_id]
+    st.caption(f"**{meta['name']}** — previewing your actual resume content")
+    full_html = render_resume(template_id, content_html, color)
+    doc_style = """
+    <style>
+        html { background: #f0f0f0; }
+        body {
+            background: #fff;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 24px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+            border-radius: 4px;
+        }
+    </style>
+    """
+    full_html = full_html.replace("</head>", doc_style + "</head>", 1)
+    components.html(full_html, height=700, scrolling=True)
+
+
 col_theme, col_color, col_preview = st.columns([3, 1, 0.4])
 
 with col_theme:
@@ -275,6 +321,39 @@ st.caption(f"**{selected_meta['name']}** — {selected_meta['description']}")
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────────
+
+
+@st.dialog("Confirm Re-optimize", width="small")
+def _confirm_reoptimize():
+    st.warning(
+        "Re-optimizing will **discard your current resume and all edits** "
+        "and start fresh from your uploaded PDF."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Yes, re-optimize", type="primary", use_container_width=True):
+            st.session_state["_opt_confirm_yes"] = True
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Confirm Reload Resume", width="small")
+def _confirm_reload_resume():
+    st.warning(
+        "Reloading will **discard all edits** you have made "
+        "and convert the PDF from scratch."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Yes, reload", type="primary", use_container_width=True):
+            st.session_state["_qe_confirm_yes"] = True
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
 
 def _resolve_resume_path() -> Path | None:
     if not uploaded_resume:
@@ -382,7 +461,7 @@ def _render_edit_section(
                         st.session_state[pdf_bytes_key] = pdf_bytes
                         st.session_state[pdf_name_key] = pdf_name
                         st.session_state[success_msg_key] = (
-                            f"Resume updated! Saved to: **{pdf_name}**"
+                            "✅ Edit applied — resume updated."
                         )
                     except Exception as e:
                         st.error(f"PDF export failed: {e}")
@@ -390,16 +469,34 @@ def _render_edit_section(
 
                     st.markdown(f"✅ {result['changes_summary']}")
 
-            st.success(st.session_state[success_msg_key])
+            st.rerun()
+
+    # ── Persistent download – always visible when a PDF is ready ──────────
+    if st.session_state.get(pdf_bytes_key):
+        _dl_col, _pv_col = st.columns([5, 1])
+        with _dl_col:
             st.download_button(
-                label=_DL_LABEL_RESUME,
+                label="⬇️ Download Current Resume (PDF)",
                 data=st.session_state[pdf_bytes_key],
                 file_name=st.session_state[pdf_name_key],
                 mime="application/pdf",
                 type="primary",
-                key=f"{form_id}_edit_dl",
+                key=f"{form_id}_dl_persistent",
+                use_container_width=True,
             )
-            st.rerun()
+        with _pv_col:
+            if st.button(
+                "👁️",
+                key=f"{form_id}_preview_btn",
+                use_container_width=True,
+                help="Preview current resume",
+            ):
+                _show_resume_preview(
+                    st.session_state[content_key],
+                    selected_template_id,
+                    primary_color,
+                )
+
 
     with st.form(form_id, clear_on_submit=True):
         edit_instruction = st.text_area(
@@ -430,6 +527,9 @@ def _render_edit_section(
                 disabled=not st.session_state.get(undo_key),
             )
 
+    if apply_edit and not edit_instruction.strip():
+        st.warning("Please describe the changes you'd like to make before clicking Apply Edit.")
+
     if apply_edit and edit_instruction.strip():
         key_to_use = _get_api_key()
         if key_to_use is None:
@@ -450,7 +550,7 @@ def _render_edit_section(
             st.session_state[pdf_bytes_key] = pdf_bytes
             st.session_state[pdf_name_key] = pdf_name
             st.session_state[success_msg_key] = (
-                "Edit undone — previous version restored."
+                "↩️ Edit undone — previous version restored."
             )
         except Exception as e:
             st.error(f"PDF export failed after undo: {e}")
@@ -472,6 +572,9 @@ _OPT_STATE_KEYS = (
     "_opt_content_html", "_opt_job_title", "_opt_company",
     "_opt_status_log", "_opt_pdf_bytes", "_opt_pdf_name",
     "_opt_success_msg", "_opt_edit_history", "_opt_edit_undo_html",
+    # thread lifecycle keys — cleared at start of each new run
+    "_opt_thread_active", "_opt_thread_done", "_opt_thread_result",
+    "_opt_thread", "_opt_thread_state", "_opt_cancel_event", "_opt_error",
 )
 
 with tab_optimize:
@@ -483,13 +586,28 @@ with tab_optimize:
         "Provide a job URL, a job description, or both (text takes precedence)."
     )
 
+    strict_mode = st.checkbox(
+        "🔒 Strict Optimization",
+        value=True,
+        key="opt_strict_mode",
+        help=(
+            "**Checked (recommended):** Optimization stays 100% faithful to your "
+            "base resume. The AI can rephrase existing content using JD terminology, "
+            "surface skills already demonstrated in your experience, expand acronyms, "
+            "and restructure bullets — but will NEVER add skills, technologies, "
+            "certifications, metrics, or experiences not present in your original resume.\n\n"
+            "**Unchecked:** Standard optimization mode. The AI may add relevant skills "
+            "or context beyond the base resume to maximize ATS keyword match rate."
+        ),
+    )
+
     # ── Fingerprinting for cache invalidation ────────────────────────────
 
     def _opt_fingerprint() -> str:
         uploaded_id = ""
         if uploaded_resume is not None:
             uploaded_id = f"{uploaded_resume.name}:{uploaded_resume.size}"
-        parts = [uploaded_id, jd_text.strip(), jd_url.strip()]
+        parts = [uploaded_id, jd_text.strip(), jd_url.strip(), str(strict_mode)]
         return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     _opt_fp = _opt_fingerprint()
@@ -504,44 +622,73 @@ with tab_optimize:
 
     # ── Action buttons ───────────────────────────────────────────────────
 
+    _opt_thread_active = st.session_state.get("_opt_thread_active", False)
+    _opt_thread_state = st.session_state.get("_opt_thread_state", {})
+    _opt_thread_done = bool(
+        st.session_state.get("_opt_thread_done", False)
+        or _opt_thread_state.get("done", False)
+    )
+    _is_busy = _opt_running or (_opt_thread_active and not _opt_thread_done)
+
     st.markdown("")
     if _opt_has_cached:
         col_opt_btn, col_exp_btn = st.columns(2)
         with col_opt_btn:
-            _opt_area = st.empty()
-            if _opt_running:
+            if _is_busy:
                 opt_run = False
-                _opt_area.button(
+                st.button(
                     "⏳ Optimizing…", disabled=True, type="primary",
                     use_container_width=True, key="opt_busy",
                 )
             else:
-                opt_run = _opt_area.button(
+                opt_run = st.button(
                     "🔄 Re-optimize", type="primary",
                     use_container_width=True, key="opt_rerun",
                 )
         with col_exp_btn:
-            _exp_area = st.empty()
-            if opt_run or _opt_running:
+            if _is_busy:
                 opt_export = False
+                if _opt_thread_active and not _opt_thread_done:
+                    if st.button(
+                        "❌ Cancel",
+                        type="secondary",
+                        use_container_width=True,
+                        key="opt_cancel",
+                        help="Stop the current optimization",
+                    ):
+                        _ev = st.session_state.get("_opt_cancel_event")
+                        if _ev:
+                            _ev.set()
             else:
-                opt_export = _exp_area.button(
+                opt_export = st.button(
                     "🎨 Re-export with Style",
                     use_container_width=True, key="opt_export",
                     help="Regenerate PDF with the current theme & accent color",
                 )
     else:
-        _opt_area = st.empty()
-        _exp_area = st.empty()
         opt_export = False
-        if _opt_running:
+        if _is_busy:
             opt_run = False
-            _opt_area.button(
-                "⏳ Optimizing…", disabled=True, type="primary",
-                use_container_width=True, key="opt_busy2",
-            )
+            col_busy, col_cancel = st.columns(2)
+            with col_busy:
+                st.button(
+                    "⏳ Optimizing…", disabled=True, type="primary",
+                    use_container_width=True, key="opt_busy2",
+                )
+            with col_cancel:
+                if _opt_thread_active and not _opt_thread_done:
+                    if st.button(
+                        "❌ Cancel",
+                        type="secondary",
+                        use_container_width=True,
+                        key="opt_cancel2",
+                        help="Stop the current optimization",
+                    ):
+                        _ev = st.session_state.get("_opt_cancel_event")
+                        if _ev:
+                            _ev.set()
         else:
-            opt_run = _opt_area.button(
+            opt_run = st.button(
                 "🚀 Optimize Resume", type="primary",
                 use_container_width=True, key="opt_go",
             )
@@ -561,6 +708,17 @@ with tab_optimize:
         if resume_path is None:
             st.stop()
 
+        # Confirm before discarding existing edits
+        _has_opt_edits = bool(st.session_state.get("_opt_edit_history"))
+        if _has_opt_edits and not st.session_state.pop("_opt_confirm_yes", False):
+            _confirm_reoptimize()
+            st.stop()
+
+        # Cancel any running thread before starting fresh
+        _ev = st.session_state.get("_opt_cancel_event")
+        if _ev:
+            _ev.set()
+
         opt_results.empty()
         for _key in _OPT_STATE_KEYS:
             st.session_state.pop(_key, None)
@@ -569,25 +727,43 @@ with tab_optimize:
         st.session_state["_opt_start"] = True
         st.session_state["_opt_resume_path"] = str(resume_path)
         st.session_state["_opt_api_key"] = key_to_use
+        st.session_state["_opt_strict_mode"] = strict_mode
         st.rerun()
 
-    # ── Optimization execution ───────────────────────────────────────────
+    # ── Phase 1: launch optimization thread ──────────────────────────────
 
     if _opt_running:
         st.session_state.pop("_opt_start", None)
         _base_path = Path(st.session_state.pop("_opt_resume_path"))
         _api = st.session_state.pop("_opt_api_key", "")
+        _strict_mode_t = st.session_state.pop("_opt_strict_mode", True)
 
         for _key in _OPT_STATE_KEYS:
             st.session_state.pop(_key, None)
         opt_results.empty()
         st.session_state["_opt_status_log"] = []
 
-        def _log(msg: str) -> None:
-            st.session_state["_opt_status_log"].append(("status", msg))
-            st.write(msg)
+        _cancel_ev = threading.Event()
+        st.session_state["_opt_cancel_event"] = _cancel_ev
+        _thread_state = {
+            "status_log": [],
+            "done": False,
+            "result": None,
+            "error": None,
+        }
+        st.session_state["_opt_thread_state"] = _thread_state
 
-        def _on_iter(data: dict) -> None:
+        # Capture widget values now — thread closure stays stable across reruns
+        _jd_text_t = jd_text.strip() or None
+        _jd_url_t = jd_url.strip() or None
+        _primary_color_t = primary_color
+
+        def _log_t(msg: str) -> None:
+            _thread_state["status_log"].append(("status", msg))
+
+        def _on_iter_t(data: dict) -> None:
+            if _cancel_ev.is_set():
+                raise RuntimeError("Optimization cancelled by user.")
             i = data["iteration"]
             score = data["ats_score"]
             vscore = data.get("verified_score")
@@ -645,62 +821,164 @@ with tab_optimize:
             if changes:
                 hdr += f"\n\n> 📝 {changes}"
 
-            st.session_state["_opt_status_log"].append(("iteration", hdr))
-            st.markdown(hdr)
-            st.divider()
+            _thread_state["status_log"].append(("iteration", hdr))
 
-        with opt_results.container():
-            with st.status("Optimizing resume…", expanded=True) as status:
-                _log("Starting optimization pipeline…")
-                try:
-                    result = optimize_resume(
-                        base_resume_pdf=_base_path,
-                        jd_text=jd_text.strip() or None,
-                        jd_url=jd_url.strip() or None,
-                        primary_color=primary_color,
-                        api_key=_api or None,
-                        on_iteration=_on_iter,
-                        on_status=_log,
-                    )
-                except Exception as e:
-                    status.update(label="Optimization failed", state="error")
-                    st.error(f"Error: {e}")
-                    st.stop()
-
-                _log("Generating PDF…")
-                try:
-                    pdf_bytes, pdf_name = _rebuild_pdf(
-                        result["content_html"],
-                        company=result.get("company"),
-                    )
-                except Exception as e:
-                    status.update(label="PDF export failed", state="error")
-                    st.error(f"Error: {e}")
-                    st.stop()
-
-                status.update(
-                    label="✅ Optimization complete!", state="complete"
+        def _run_opt_thread() -> None:
+            try:
+                result = optimize_resume(
+                    base_resume_pdf=_base_path,
+                    jd_text=_jd_text_t,
+                    jd_url=_jd_url_t,
+                    primary_color=_primary_color_t,
+                    api_key=_api or None,
+                    on_iteration=_on_iter_t,
+                    on_status=_log_t,
+                    strict_mode=_strict_mode_t,
                 )
+                _thread_state["result"] = result
+            except Exception as e:
+                _msg = str(e)
+                _thread_state["error"] = (
+                    "cancelled" if "cancelled" in _msg.lower() else _msg
+                )
+            finally:
+                _thread_state["done"] = True
 
-            st.session_state["_opt_content_html"] = result["content_html"]
-            st.session_state["_opt_job_title"] = result["job_title"]
-            st.session_state["_opt_company"] = result["company"]
-            st.session_state["_opt_fingerprint"] = _opt_fp
-            st.session_state["_opt_pdf_bytes"] = pdf_bytes
-            st.session_state["_opt_pdf_name"] = pdf_name
-            st.session_state["_opt_success_msg"] = (
-                f"Resume optimized! Saved to: **{pdf_name}**"
+        _thr = threading.Thread(target=_run_opt_thread, daemon=True)
+        st.session_state["_opt_thread_active"] = True
+        _thr.start()
+        st.session_state["_opt_thread"] = _thr
+        st.rerun()
+
+    # ── Phase 2: poll thread / process results ────────────────────────────
+
+    elif _opt_thread_active:
+        if _opt_thread_done:
+            # Thread finished — clear thread state and act on result
+            _thread_state = st.session_state.get("_opt_thread_state", {})
+            _status_log = list(_thread_state.get("status_log", []))
+            st.session_state["_opt_status_log"] = _status_log
+            st.session_state.pop("_opt_thread_active", None)
+            st.session_state.pop("_opt_thread_done", None)
+            st.session_state.pop("_opt_thread", None)
+            st.session_state.pop("_opt_thread_state", None)
+            st.session_state.pop("_opt_cancel_event", None)
+            _thread_error = (
+                st.session_state.pop("_opt_error", None)
+                or _thread_state.get("error")
+            )
+            _thread_result = (
+                st.session_state.pop("_opt_thread_result", None)
+                or _thread_state.get("result")
             )
 
-            st.success(st.session_state["_opt_success_msg"])
-            st.download_button(
-                label=_DL_LABEL_OPT,
-                data=pdf_bytes,
-                file_name=pdf_name,
-                mime="application/pdf",
-                type="primary",
-                key="opt_dl_fresh",
-            )
+            if _thread_error == "cancelled":
+                with opt_results.container():
+                    with st.status(
+                        "⏹️ Optimization cancelled",
+                        state="error", expanded=False,
+                    ):
+                        for _etype, _content in _status_log:
+                            if _etype == "status":
+                                st.write(_content)
+                            else:
+                                st.markdown(_content)
+                                st.divider()
+                    st.info(
+                        "Optimization was cancelled. Your uploaded resume is still "
+                        "available — click **Optimize Resume** to try again."
+                    )
+
+            elif _thread_error:
+                with opt_results.container():
+                    with st.status(
+                        "❌ Optimization failed",
+                        state="error", expanded=True,
+                    ):
+                        for _etype, _content in _status_log:
+                            if _etype == "status":
+                                st.write(_content)
+                            else:
+                                st.markdown(_content)
+                                st.divider()
+                    st.error(f"Error: {_thread_error}")
+                    st.info(
+                        "Your uploaded resume is still available — "
+                        "click **Optimize Resume** to retry."
+                    )
+                # Clear partial log so it doesn't show as "complete" on next run
+                st.session_state["_opt_status_log"] = []
+
+            else:
+                # Success — build PDF in main thread (can use Streamlit globals)
+                with opt_results.container():
+                    with st.status("Generating PDF…", expanded=True) as _status:
+                        try:
+                            pdf_bytes, pdf_name = _rebuild_pdf(
+                                _thread_result["content_html"],
+                                company=_thread_result.get("company"),
+                            )
+                        except Exception as e:
+                            _status.update(label="PDF export failed", state="error")
+                            st.error(f"PDF export failed: {e}")
+                            st.stop()
+                        _status.update(
+                            label="✅ Optimization complete!", state="complete"
+                        )
+
+                    st.session_state["_opt_content_html"] = _thread_result["content_html"]
+                    st.session_state["_opt_job_title"] = _thread_result["job_title"]
+                    st.session_state["_opt_company"] = _thread_result["company"]
+                    st.session_state["_opt_fingerprint"] = _opt_fp
+                    st.session_state["_opt_pdf_bytes"] = pdf_bytes
+                    st.session_state["_opt_pdf_name"] = pdf_name
+                    st.session_state["_opt_success_msg"] = (
+                        "✅ Resume optimized! Your tailored PDF is ready to download."
+                    )
+
+                    st.success(st.session_state["_opt_success_msg"])
+                    _dl_c, _pv_c = st.columns([5, 1])
+                    with _dl_c:
+                        st.download_button(
+                            label=_DL_LABEL_OPT,
+                            data=pdf_bytes,
+                            file_name=pdf_name,
+                            mime="application/pdf",
+                            type="primary",
+                            key="opt_dl_fresh",
+                            use_container_width=True,
+                        )
+                    with _pv_c:
+                        if st.button(
+                            "👁️",
+                            key="opt_preview_fresh",
+                            use_container_width=True,
+                            help="Preview current resume",
+                        ):
+                            _show_resume_preview(
+                                _thread_result["content_html"],
+                                selected_template_id,
+                                primary_color,
+                            )
+
+        else:
+            # Thread still running — render live log and poll every 0.5 s
+            with opt_results.container():
+                _thread_state = st.session_state.get("_opt_thread_state", {})
+                _current_log = list(_thread_state.get("status_log", []))
+                _status = st.status(
+                    "Optimizing resume…",
+                    state="running",
+                    expanded=True,
+                )
+                for _etype, _content in _current_log:
+                    if _etype == "status":
+                        _status.write(_content)
+                    else:
+                        _status.markdown(_content)
+                        _status.divider()
+            time.sleep(0.5)
+            st.rerun()
 
     # ── Re-export with new style ─────────────────────────────────────────
 
@@ -719,17 +997,32 @@ with tab_optimize:
             st.session_state["_opt_pdf_bytes"] = pdf_bytes
             st.session_state["_opt_pdf_name"] = pdf_name
             st.session_state["_opt_success_msg"] = (
-                f"PDF re-exported! Saved to: **{pdf_name}**"
+                "✅ PDF re-exported with the new style. Ready to download."
             )
             st.success(st.session_state["_opt_success_msg"])
-            st.download_button(
-                label=_DL_LABEL_OPT,
-                data=pdf_bytes,
-                file_name=pdf_name,
-                mime="application/pdf",
-                type="primary",
-                key="opt_dl_reexport",
-            )
+            _dl_c, _pv_c = st.columns([5, 1])
+            with _dl_c:
+                st.download_button(
+                    label=_DL_LABEL_OPT,
+                    data=pdf_bytes,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    type="primary",
+                    key="opt_dl_reexport",
+                    use_container_width=True,
+                )
+            with _pv_c:
+                if st.button(
+                    "👁️",
+                    key="opt_preview_reexport",
+                    use_container_width=True,
+                    help="Preview current resume",
+                ):
+                    _show_resume_preview(
+                        content_html,
+                        selected_template_id,
+                        primary_color,
+                    )
 
     # ── Persist cached results ───────────────────────────────────────────
 
@@ -750,14 +1043,29 @@ with tab_optimize:
             if "_opt_success_msg" in st.session_state:
                 st.success(st.session_state["_opt_success_msg"])
             if "_opt_pdf_bytes" in st.session_state:
-                st.download_button(
-                    label=_DL_LABEL_OPT,
-                    data=st.session_state["_opt_pdf_bytes"],
-                    file_name=st.session_state["_opt_pdf_name"],
-                    mime="application/pdf",
-                    type="primary",
-                    key="opt_dl_cached",
-                )
+                _dl_c, _pv_c = st.columns([5, 1])
+                with _dl_c:
+                    st.download_button(
+                        label=_DL_LABEL_OPT,
+                        data=st.session_state["_opt_pdf_bytes"],
+                        file_name=st.session_state["_opt_pdf_name"],
+                        mime="application/pdf",
+                        type="primary",
+                        key="opt_dl_cached",
+                        use_container_width=True,
+                    )
+                with _pv_c:
+                    if st.button(
+                        "👁️",
+                        key="opt_preview_cached",
+                        use_container_width=True,
+                        help="Preview current resume",
+                    ):
+                        _show_resume_preview(
+                            st.session_state["_opt_content_html"],
+                            selected_template_id,
+                            primary_color,
+                        )
 
     # ── Edit section (Tab 1) ─────────────────────────────────────────────
 
@@ -862,6 +1170,12 @@ with tab_edit:
         if resume_path is None:
             st.stop()
 
+        # Confirm before discarding existing edits
+        _has_qe_edits = bool(st.session_state.get("_qe_edit_history"))
+        if _has_qe_edits and not st.session_state.pop("_qe_confirm_yes", False):
+            _confirm_reload_resume()
+            st.stop()
+
         qe_results.empty()
         for _key in _QE_STATE_KEYS:
             st.session_state.pop(_key, None)
@@ -906,18 +1220,33 @@ with tab_edit:
             st.session_state["_qe_pdf_bytes"] = pdf_bytes
             st.session_state["_qe_pdf_name"] = pdf_name
             st.session_state["_qe_success_msg"] = (
-                f"Resume loaded! Saved to: **{pdf_name}**"
+                "✅ Resume loaded and converted! Ready to download."
             )
 
             st.success(st.session_state["_qe_success_msg"])
-            st.download_button(
-                label=_DL_LABEL_RESUME,
-                data=pdf_bytes,
-                file_name=pdf_name,
-                mime="application/pdf",
-                type="primary",
-                key="qe_dl_fresh",
-            )
+            _dl_c, _pv_c = st.columns([5, 1])
+            with _dl_c:
+                st.download_button(
+                    label=_DL_LABEL_RESUME,
+                    data=pdf_bytes,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    type="primary",
+                    key="qe_dl_fresh",
+                    use_container_width=True,
+                )
+            with _pv_c:
+                if st.button(
+                    "👁️",
+                    key="qe_preview_fresh",
+                    use_container_width=True,
+                    help="Preview current resume",
+                ):
+                    _show_resume_preview(
+                        result["content_html"],
+                        selected_template_id,
+                        primary_color,
+                    )
 
     # ── Re-export with new style ─────────────────────────────────────────
 
@@ -933,17 +1262,32 @@ with tab_edit:
             st.session_state["_qe_pdf_bytes"] = pdf_bytes
             st.session_state["_qe_pdf_name"] = pdf_name
             st.session_state["_qe_success_msg"] = (
-                f"PDF re-exported! Saved to: **{pdf_name}**"
+                "✅ PDF re-exported with the new style. Ready to download."
             )
             st.success(st.session_state["_qe_success_msg"])
-            st.download_button(
-                label=_DL_LABEL_RESUME,
-                data=pdf_bytes,
-                file_name=pdf_name,
-                mime="application/pdf",
-                type="primary",
-                key="qe_dl_reexport",
-            )
+            _dl_c, _pv_c = st.columns([5, 1])
+            with _dl_c:
+                st.download_button(
+                    label=_DL_LABEL_RESUME,
+                    data=pdf_bytes,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    type="primary",
+                    key="qe_dl_reexport",
+                    use_container_width=True,
+                )
+            with _pv_c:
+                if st.button(
+                    "👁️",
+                    key="qe_preview_reexport",
+                    use_container_width=True,
+                    help="Preview current resume",
+                ):
+                    _show_resume_preview(
+                        content_html,
+                        selected_template_id,
+                        primary_color,
+                    )
 
     # ── Persist cached results ───────────────────────────────────────────
 
@@ -952,14 +1296,29 @@ with tab_edit:
             if "_qe_success_msg" in st.session_state:
                 st.success(st.session_state["_qe_success_msg"])
             if "_qe_pdf_bytes" in st.session_state:
-                st.download_button(
-                    label=_DL_LABEL_RESUME,
-                    data=st.session_state["_qe_pdf_bytes"],
-                    file_name=st.session_state["_qe_pdf_name"],
-                    mime="application/pdf",
-                    type="primary",
-                    key="qe_dl_cached",
-                )
+                _dl_c, _pv_c = st.columns([5, 1])
+                with _dl_c:
+                    st.download_button(
+                        label=_DL_LABEL_RESUME,
+                        data=st.session_state["_qe_pdf_bytes"],
+                        file_name=st.session_state["_qe_pdf_name"],
+                        mime="application/pdf",
+                        type="primary",
+                        key="qe_dl_cached",
+                        use_container_width=True,
+                    )
+                with _pv_c:
+                    if st.button(
+                        "👁️",
+                        key="qe_preview_cached",
+                        use_container_width=True,
+                        help="Preview current resume",
+                    ):
+                        _show_resume_preview(
+                            st.session_state["_qe_content_html"],
+                            selected_template_id,
+                            primary_color,
+                        )
 
     # ── Edit section (Tab 2) ─────────────────────────────────────────────
 

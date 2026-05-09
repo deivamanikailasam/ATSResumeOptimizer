@@ -70,6 +70,22 @@ def get_client(api_key: str | None = None) -> OpenAI:
     return OpenAI(api_key=key.strip())
 
 
+def _create_chat_completion(
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    temperature: float | None = None,
+):
+    """Create a chat completion, omitting unsupported params for GPT-5 models."""
+    kwargs = {
+        "model": model,
+        "messages": messages,
+    }
+    if temperature is not None and not model.lower().startswith("gpt-5"):
+        kwargs["temperature"] = temperature
+    return client.chat.completions.create(**kwargs)
+
+
 def _extract_text_from_html(html: str) -> str:
     """Extract plain text from HTML content."""
 
@@ -190,7 +206,7 @@ def verify_keyword_coverage(html_content: str, jd_keywords: dict) -> dict:
 
 def extract_jd_keywords(
     jd_text: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
 ) -> dict:
     """Extract structured, prioritized keywords from a job description."""
@@ -202,6 +218,8 @@ qualification mentioned.
 
 Return a JSON object with exactly these keys:
 - "job_title": the exact job title from the posting
+- "company": the company/employer name from the posting, or "UnknownCompany"
+  if not clearly stated
 - "required_hard_skills": array of mandatory technical skills, tools,
   technologies, programming languages, and frameworks explicitly required
 - "required_soft_skills": array of soft skills mentioned as required
@@ -222,7 +240,8 @@ Return a JSON object with exactly these keys:
 JOB DESCRIPTION:
 \"\"\"{jd_text}\"\"\"
 """
-    resp = client.chat.completions.create(
+    resp = _create_chat_completion(
+        client,
         model=model,
         messages=[
             {
@@ -243,6 +262,29 @@ JOB DESCRIPTION:
 # ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------
+
+STRICT_SYSTEM_PROMPT = """\
+You are an ATS resume optimizer operating in STRICT truthfulness mode.
+
+The base resume is ground truth. Improve ATS alignment only by:
+- Rephrasing existing content with JD terminology without changing meaning.
+- Moving, grouping, and ordering existing skills and experience.
+- Surfacing skills that are clearly present in the resume body.
+- Expanding acronyms already present in the resume.
+- Improving formatting, headings, and concise summary wording.
+
+Never add skills, tools, certifications, companies, projects, metrics,
+responsibilities, or experience that are absent from the base resume.
+If a JD keyword cannot be added honestly, leave it out and report it as
+missing. Preserve every original section and keep the output as semantic
+resume-body HTML only. Return valid JSON only.
+
+Do not optimize by dumping JD keywords into the Skills section. ATS quality
+comes from relevant, evidence-backed context. Keep the Skills section concise:
+include original skills plus only the most relevant hard skills/tools that are
+clearly supported by the resume. Put responsibilities, domains, and soft skills
+in Summary or Experience only when the resume proves them.
+"""
 
 SYSTEM_PROMPT = """\
 You are a senior technical recruiter, expert resume writer, and HTML specialist.
@@ -366,10 +408,31 @@ Rules:
 """
 
 
-def _format_keyword_checklist(jd_keywords: dict) -> str:
+def _format_keyword_checklist(jd_keywords: dict, strict_mode: bool = False) -> str:
     """Build a keyword checklist section for the user prompt."""
     if not jd_keywords:
         return ""
+
+    hard_skill_label = (
+        "- MUST-HAVE Hard Skills (highest priority — each must appear "
+        "in 2-3 sections): "
+    )
+    soft_skill_label = "- MUST-HAVE Soft Skills (weave into Summary and bullets): "
+    preferred_skill_label = (
+        "- PREFERRED Skills (include where candidate has real experience): "
+    )
+    if strict_mode:
+        hard_skill_label = (
+            "- MUST-HAVE Hard Skills (highest priority — include only where "
+            "the resume provides evidence): "
+        )
+        soft_skill_label = (
+            "- MUST-HAVE Soft Skills (use only in Summary/Experience when "
+            "supported by evidence): "
+        )
+        preferred_skill_label = (
+            "- PREFERRED Skills (skip unless clearly supported by the resume): "
+        )
 
     lines = [
         "\n**Pre-extracted JD Keyword Checklist — ensure ALL are addressed:**"
@@ -387,20 +450,15 @@ def _format_keyword_checklist(jd_keywords: dict) -> str:
         )
     if jd_keywords.get("required_hard_skills"):
         lines.append(
-            "- MUST-HAVE Hard Skills (highest priority — each must appear "
-            "in 2-3 sections): "
-            + ", ".join(jd_keywords["required_hard_skills"])
+            hard_skill_label + ", ".join(jd_keywords["required_hard_skills"])
         )
     if jd_keywords.get("required_soft_skills"):
         lines.append(
-            "- MUST-HAVE Soft Skills (weave into Summary and bullets): "
-            + ", ".join(jd_keywords["required_soft_skills"])
+            soft_skill_label + ", ".join(jd_keywords["required_soft_skills"])
         )
     if jd_keywords.get("preferred_skills"):
         lines.append(
-            "- PREFERRED Skills (include where candidate has real "
-            "experience): "
-            + ", ".join(jd_keywords["preferred_skills"])
+            preferred_skill_label + ", ".join(jd_keywords["preferred_skills"])
         )
     if jd_keywords.get("industry_terms"):
         lines.append(
@@ -438,6 +496,14 @@ structured?
 title?
 - Experience Alignment (10%): Does the resume reflect required years and \
 experience level?"""
+
+
+_STRICT_ATS_SCORING_NOTE = """\
+**Strict Mode Scoring Note:** Do NOT increase ats_score for keyword stuffing
+or long skill lists. Penalize overloaded Skills sections. Reward only concise,
+evidence-backed keyword placement in Summary/Experience and clearly proven
+hard skills/tools in Skills.
+"""
 
 
 _STRATEGIES_LIST = """\
@@ -486,22 +552,72 @@ def _format_resume_analysis(resume_analysis: dict | None) -> str:
     return "\n".join(lines)
 
 
+_STRICT_MODE_TASK_ADDENDUM = """\
+**STRICT MODE:** Use only facts, skills, tools, metrics, and experience
+already present in the original resume. Rephrase, reorder, surface latent
+skills, and expand existing acronyms. Do not invent anything. Leave any
+unverifiable JD keyword in "missing_keywords".
+
+**Skills discipline:** Do not fill the Skills section with every JD keyword.
+Add only high-signal hard skills/tools that are clearly supported by the
+resume. Keep soft skills, responsibilities, domains, and generic phrases out
+of Skills unless they were already listed there. Prefer weaving supported
+keywords into existing experience bullets with evidence.
+
+All skill subheadings/categories (Languages and Frameworks, Cloud, DevOps,
+Databases, Tools, Methodologies, Libraries, etc.) MUST be nested inside the
+single Skills section as `.skill-category` blocks. Never create standalone
+resume sections for skill categories.
+
+"""
+
+
 def build_user_prompt(
     resume_text: str,
     jd_text: str,
     jd_keywords: dict | None = None,
     primary_color: str = "#2563eb",
     resume_analysis: dict | None = None,
+    strict_mode: bool = True,
 ) -> str:
-    keyword_checklist = _format_keyword_checklist(jd_keywords or {})
+    keyword_checklist = _format_keyword_checklist(
+        jd_keywords or {}, strict_mode=strict_mode
+    )
     analysis_section = _format_resume_analysis(resume_analysis)
     content_structure = build_content_structure(resume_analysis)
+    strict_section = _STRICT_MODE_TASK_ADDENDUM if strict_mode else ""
+    keyword_frequency_guidance = (
+        "- Prioritize contextual evidence over repeated keyword frequency.\n"
+        "   - A supported keyword in a strong Experience bullet is better than\n"
+        "     repeating it in Summary + Skills without proof.\n"
+        "   - Do not force every keyword into multiple sections; leave weak or\n"
+        "     unsupported keywords in missing_keywords."
+        if strict_mode
+        else "- Each must-have keyword MUST appear in at least 2-3 sections\n"
+        "   - Weave exact phrases and terminology from the JD into existing bullets\n"
+        "   - Replace generic verbs with the JD's own action verbs\n"
+        "   - Include both hard skills and soft skills from the JD"
+    )
+    skills_guidance = (
+        "Keep original skills; reorder by relevance. Add only a few high-signal "
+        "hard skills/tools that are explicitly supported by the resume body. "
+        "Do NOT add every JD keyword, soft skill, responsibility, domain, or "
+        "generic phrase to Skills. Keep all skill categories inside the single "
+        "Skills section as .skill-category blocks; never create separate "
+        "resume sections for Languages and Frameworks, Cloud, DevOps, Tools, "
+        "Databases, Methodologies, Libraries, or similar skill groupings."
+        if strict_mode
+        else "Keep original skills; add new JD-relevant ones the candidate "
+        "genuinely has. Keep all skill categories inside the single Skills "
+        "section as .skill-category blocks; never create separate resume "
+        "sections for skill groupings."
+    )
 
     return f"""\
 I will give you my current resume and a target job description.
 {keyword_checklist}
 {analysis_section}
-
+{strict_section}
 **Your task:**
 1. Analyze the job description and categorize requirements into:
    (a) Required/must-have hard skills and technologies
@@ -513,21 +629,19 @@ I will give you my current resume and a target job description.
    Do NOT rewrite it from scratch. Keep my original content, sentences,
    and bullet points as the foundation. Only:
    - Update wording and phrasing to use JD-specific terminology.
-   - Add new JD-relevant keywords or skills where they fit naturally.
+   - Add new JD-relevant keywords or skills where they fit naturally{" — but ONLY if already present in my resume (strict mode)" if strict_mode else ""}.
    - Remove content that is clearly irrelevant to the target role.
-   - Strengthen existing bullets with better action verbs or metrics.
+   - Strengthen existing bullets with better action verbs or metrics{" based solely on original content (strict mode)" if strict_mode else ""}.
 3. Open the Professional Summary with the exact target job title from the JD,
    followed by matching years of experience. Refine the rest of the summary
    to incorporate JD keywords while keeping the original narrative.
 4. Maximize ATS match by naturally incorporating critical keywords INTO
    existing content:
-   - Each must-have keyword MUST appear in at least 2-3 sections
-   - Weave exact phrases and terminology from the JD into existing bullets
-   - Replace generic verbs with the JD's own action verbs
-   - Include both hard skills and soft skills from the JD
+   {keyword_frequency_guidance}
 5. Order skills by relevance to the JD (most relevant first in each category).
-   Keep original skills; add new JD-relevant ones the candidate genuinely has.
-6. Create semantic skill clusters — group related technologies together.
+   {skills_guidance}
+6. Create semantic skill clusters inside the Skills section only — group
+   related technologies as `.skill-category` blocks, not standalone sections.
 7. Keep the resume concise — 1-2 pages for mid-level, up to 3 for senior
    candidates with extensive relevant experience.
 8. Maintain only realistic, honest claims based on my original resume.
@@ -546,6 +660,7 @@ The selected accent color is {primary_color} — you do NOT need to add any
 inline color styles; the template CSS handles colors automatically.
 
 {_ATS_SCORING_RUBRIC}
+{_STRICT_ATS_SCORING_NOTE if strict_mode else ""}
 
 **Return a single JSON object with exactly these keys:**
 - "tailored_resume_html": the full resume body as HTML following the
@@ -572,6 +687,7 @@ def _build_refinement_prompt(
     missing_keywords: list[str],
     verification: dict | None = None,
     resolved_keywords: list[str] | None = None,
+    strict_mode: bool = True,
 ) -> str:
     priority_section = ""
     if verification:
@@ -608,10 +724,39 @@ def _build_refinement_prompt(
             f"(do NOT remove them):**\n{json.dumps(resolved_keywords)}\n"
         )
 
+    strict_refinement_reminder = ""
+    if strict_mode:
+        strict_refinement_reminder = """\
+**STRICT MODE:** Add only missing keywords already supported by the original
+resume. If unsupported, keep them missing. Do not invent facts.
+Do not place missing keywords into Skills unless they are concrete hard
+skills/tools already proven in the resume. Prefer evidence-backed Experience
+phrasing over repeated keywords.
+Keep any skill category inside the existing Skills section as `.skill-category`;
+do not create standalone skill-category sections.
+
+"""
+
+    placement_guidance = (
+        "- Supported hard skills/tools -> Skills only if concise and clearly "
+        "proven by the resume.\n"
+        "- Responsibilities, domains, soft skills, and generic phrases -> "
+        "Summary/Experience only when evidenced.\n"
+        "- Do not force keywords into multiple sections. Keep unsupported or "
+        "weak keywords in missing_keywords."
+        if strict_mode
+        else "- Must-have keywords -> add to Professional Summary + Skills "
+        "section + at least one Experience bullet each.\n"
+        "- Preferred keywords -> add to Skills section and/or relevant "
+        "Experience bullets.\n"
+        "- Verify each primary keyword appears in at least 2-3 sections.\n"
+        "- Verify all keywords are in meaningful, achievement-based contexts."
+    )
+
     return f"""\
 The following important keywords are still weak or missing in the resume:
 {json.dumps(missing_keywords)}
-{priority_section}{preserve_section}
+{priority_section}{preserve_section}{strict_refinement_reminder}
 Revise the resume HTML to incorporate the missing keywords naturally —
 without exaggeration or keyword stuffing. Keep the same HTML structure
 and class names. Weave keywords into EXISTING sentences and bullets
@@ -619,14 +764,10 @@ rather than replacing original content. The resume should still closely
 resemble the candidate's original resume with targeted enhancements.
 
 **Placement guidance:**
-- Must-have keywords -> add to Professional Summary + Skills section + at
-  least one Experience bullet each.
-- Preferred keywords -> add to Skills section and/or relevant Experience
-  bullets.
-- Verify each primary keyword appears in at least 2-3 sections.
-- Verify all keywords are in meaningful, achievement-based contexts.
+{placement_guidance}
 
 {_ATS_SCORING_RUBRIC}
+{_STRICT_ATS_SCORING_NOTE if strict_mode else ""}
 
 Return the updated JSON object in the same format:
 - "tailored_resume_html"
@@ -646,10 +787,11 @@ Return the updated JSON object in the same format:
 def optimize_resume_once(
     client: OpenAI,
     messages: list[dict],
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
 ) -> dict:
     """Run one LLM call with the given message history. Returns parsed JSON."""
-    resp = client.chat.completions.create(
+    resp = _create_chat_completion(
+        client,
         model=model,
         messages=messages,
         temperature=0.2,
@@ -675,10 +817,12 @@ def optimize_until_target(
     target_score: int = 95,
     max_iterations: int = 15,
     primary_color: str = "#2563eb",
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
     resume_analysis: dict | None = None,
+    strict_mode: bool = True,
 ) -> dict:
     """Iteratively optimize resume until target ATS score or plateau.
 
@@ -702,19 +846,29 @@ def optimize_until_target(
         ``iteration``, ``ats_score``, ``verified_score``,
         ``missing_keywords``, ``improvements``, ``strategies``,
         ``verification``, ``changes_summary``.
+    on_status : callable, optional
+        Called with plain-text status updates before longer-running steps.
     resume_analysis : dict, optional
         Structural analysis of the original resume from
         ``analyze_resume_structure``.
+    strict_mode : bool, default True
+        When True, the LLM is forbidden from adding any skill, experience,
+        metric, or content not already present in the original resume.
+        Optimization is limited to rephrasing, surfacing latent skills,
+        acronym expansion, STAR restructuring, and keyword placement.
     """
     client = get_client(api_key)
 
+    system_content = STRICT_SYSTEM_PROMPT if strict_mode else SYSTEM_PROMPT
+
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_content},
         {
             "role": "user",
             "content": build_user_prompt(
                 resume_text, jd_text, jd_keywords, primary_color,
                 resume_analysis=resume_analysis,
+                strict_mode=strict_mode,
             ),
         },
     ]
@@ -727,6 +881,8 @@ def optimize_until_target(
     all_strategies: dict[str, bool] = {}
 
     for i in range(max_iterations):
+        if on_status:
+            on_status(f"Running optimization iteration {i + 1}...")
         result = optimize_resume_once(client, messages, model=model)
         ats_score = int(result.get("ats_score", 0))
 
@@ -845,6 +1001,7 @@ def optimize_until_target(
                     refinement_missing,
                     verification=refinement_verification,
                     resolved_keywords=resolved_kws,
+                    strict_mode=strict_mode,
                 ),
             }
         )
@@ -858,7 +1015,7 @@ def optimize_until_target(
 
 def extract_title_and_company(
     jd_text: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
 ) -> tuple[str, str]:
     """Extract job title and company name from job description using LLM."""
@@ -873,7 +1030,8 @@ Return a JSON object: {{"job_title": "...", "company": "..."}}.
 JOB DESCRIPTION:
 \"\"\"{jd_text}\"\"\"
 """
-    resp = client.chat.completions.create(
+    resp = _create_chat_completion(
+        client,
         model=model,
         messages=[
             {
@@ -919,7 +1077,7 @@ Rules:
 def convert_resume_to_html(
     resume_text: str,
     primary_color: str = "#2563eb",
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
     resume_analysis: dict | None = None,
 ) -> str:
@@ -944,7 +1102,8 @@ template CSS handles colors automatically.
 RESUME TEXT:
 \"\"\"{resume_text}\"\"\"
 """
-    resp = client.chat.completions.create(
+    resp = _create_chat_completion(
+        client,
         model=model,
         messages=[
             {"role": "system", "content": _CONVERT_SYSTEM_PROMPT},
@@ -980,7 +1139,7 @@ def edit_resume_html(
     current_html: str,
     instruction: str,
     edit_history: list[dict] | None = None,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
 ) -> dict:
     """Apply a natural-language edit instruction to the resume HTML.
@@ -1044,7 +1203,8 @@ Return ONLY the JSON object, no other text.
 """
     messages.append({"role": "user", "content": prompt})
 
-    resp = client.chat.completions.create(
+    resp = _create_chat_completion(
+        client,
         model=model,
         messages=messages,
         temperature=0.1,

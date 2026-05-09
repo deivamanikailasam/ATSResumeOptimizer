@@ -27,6 +27,7 @@ def optimize_resume(
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
     on_status: Callable[[str], None] | None = None,
+    strict_mode: bool = True,
 ) -> dict:
     """Run the full optimization pipeline and return cached-friendly results.
 
@@ -48,14 +49,22 @@ def optimize_resume(
         on_status("Analyzing job description and extracting keywords...")
     jd_keywords = extract_jd_keywords(job_description, api_key=api_key)
 
-    if on_status:
-        on_status("Extracting job title and company...")
-    job_title, company = extract_title_and_company(
-        job_description, api_key=api_key
-    )
+    job_title = jd_keywords.get("job_title") or "UnknownRole"
+    company = jd_keywords.get("company") or "UnknownCompany"
+    if company == "UnknownCompany":
+        if on_status:
+            on_status("Extracting job title and company...")
+        job_title, company = extract_title_and_company(
+            job_description, api_key=api_key
+        )
 
     if on_status:
-        on_status("Starting ATS optimization loop...")
+        mode_label = "strict" if strict_mode else "standard"
+        on_status(f"Starting ATS optimization loop ({mode_label} mode)...")
+    if strict_mode:
+        # Strict mode has a real honesty ceiling: unsupported JD keywords
+        # must remain missing, so repeated refinement often just burns tokens.
+        max_iterations = min(max_iterations, 3)
     best_result = optimize_until_target(
         resume_text=resume_text,
         jd_text=job_description,
@@ -65,7 +74,9 @@ def optimize_resume(
         primary_color=primary_color,
         api_key=api_key,
         on_iteration=on_iteration,
+        on_status=on_status,
         resume_analysis=resume_analysis,
+        strict_mode=strict_mode,
     )
 
     return {
@@ -149,6 +160,7 @@ def run_resume_agent(
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
     on_status: Callable[[str], None] | None = None,
+    strict_mode: bool = True,
 ) -> Path:
     """Load resume, get JD, optimize for ATS, render with template, and save PDF.
 
@@ -164,6 +176,7 @@ def run_resume_agent(
         api_key=api_key,
         on_iteration=on_iteration,
         on_status=on_status,
+        strict_mode=strict_mode,
     )
 
     return export_resume_pdf(

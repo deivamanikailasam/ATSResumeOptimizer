@@ -45,19 +45,49 @@ def _ensure_chromium() -> None:
         )
     _chromium_ready = True
 
-# Page-break CSS injected into every resume for print safety
+# Print CSS injected into every resume for consistent PDF pagination.
 _PAGE_BREAK_CSS = """\
 <style>
 /* ── Print optimizations (injected by pdf_export) ──────────────────────── */
 
+.resume-section {
+    margin-bottom: 10px !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+}
+
 .experience-item,
 .education-item,
 .project-item {
-    page-break-inside: avoid;
+    margin-bottom: 8px !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
 }
 
 h1, h2, h3 {
+    break-after: avoid;
     page-break-after: avoid;
+}
+
+.item-header,
+.company {
+    break-after: avoid;
+    page-break-after: avoid;
+}
+
+.experience-item ul,
+.education-item ul,
+.project-item p,
+.project-item ul {
+    break-before: avoid;
+    page-break-before: avoid;
+}
+
+.resume-section:last-child,
+.experience-item:last-child,
+.education-item:last-child,
+.project-item:last-child {
+    margin-bottom: 0 !important;
 }
 
 .resume-header {
@@ -65,24 +95,32 @@ h1, h2, h3 {
 }
 
 p, li {
-    orphans: 3;
-    widows: 3;
+    orphans: 2;
+    widows: 2;
+}
+
+li {
+    break-inside: avoid;
+    page-break-inside: avoid;
 }
 
 .cert-list,
 .skills-grid,
 .summary {
-    page-break-inside: avoid;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
 }
 
 .skill-category {
-    page-break-inside: avoid;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
 }
 
 /* ── Generic fallback for extra/custom sections ────────────────────────── */
 .resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) {
-    margin-bottom: 17px;
-    page-break-inside: avoid;
+    margin-bottom: 10px !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
 }
 
 .resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) h2 {
@@ -93,6 +131,8 @@ p, li {
     padding-bottom: 4px;
     margin-bottom: 8px;
     border-bottom: 1px solid #e0e0e0;
+    break-after: avoid;
+    page-break-after: avoid;
 }
 
 .resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) ul {

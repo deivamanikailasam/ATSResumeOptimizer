@@ -89,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Streamlit web UI with sidebar configuration (API key, target score, max iterations).
 - CLI entry point via `python -m ats_resume_optimizer` and `python agent.py`.
-- Iterative ATS optimization loop with GPT-4o-mini — refines missing keywords until a target score is reached.
+- Iterative ATS optimization loop with GPT-5.5 — refines missing keywords until a target score is reached.
 - Job description input via raw text or URL scraping (BeautifulSoup).
 - Automatic job title and company extraction from job descriptions using LLM.
 - PDF export via headless Chromium (Playwright) in a subprocess worker.

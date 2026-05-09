@@ -95,7 +95,7 @@ Configured in `ats_resume_optimizer/llm.py`:
 
 | Setting | Value | Location | Description |
 |---|---|---|---|
-| Model | `gpt-4o-mini` | All LLM functions | OpenAI chat model used for all calls. |
+| Model | `gpt-5.5` | All LLM functions | OpenAI chat model used for all calls. |
 | Temperature (optimization) | `0.2` | `optimize_resume_once()` | Low value for deterministic, consistent ATS optimization output. |
 | Temperature (JD extraction) | `0.0` | `extract_jd_keywords()` | Deterministic for structured keyword extraction. |
 | Temperature (title extraction) | `0.0` | `extract_title_and_company()` | Deterministic for structured field extraction. |

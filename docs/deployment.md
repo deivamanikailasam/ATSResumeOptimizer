@@ -7,7 +7,7 @@ This guide covers how to deploy ATS Resume Optimizer for local use and productio
 ### Prerequisites
 
 - Python 3.12 or later
-- An OpenAI API key with access to `gpt-4o-mini`
+- An OpenAI API key with access to `gpt-5.5`
 
 ### Setup
 

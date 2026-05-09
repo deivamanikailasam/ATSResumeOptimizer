@@ -14,7 +14,14 @@ _KNOWN_SECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("skills", re.compile(
         r"^(technical\s+skills|skills|core\s+competencies|"
         r"competencies|areas?\s+of\s+expertise|technologies|"
-        r"proficiencies|tools\s*[&and]*\s*technologies)",
+        r"proficiencies|tools\s*(?:&|and)?\s*technologies|"
+        r"programming\s+languages|languages?\s*(?:&|and|/)\s*"
+        r"(?:frameworks|libraries|tools|technologies)|"
+        r"frameworks\s*(?:&|and|/)\s*(?:libraries|tools|technologies)|"
+        r"libraries\s*(?:&|and|/)\s*(?:frameworks|tools|technologies)|"
+        r"developer\s+tools|devops\s*(?:&|and|/)?\s*tools|"
+        r"cloud\s*(?:&|and|/)\s*(?:devops|platforms|tools)|"
+        r"databases?|methodologies)",
         re.IGNORECASE,
     )),
     ("experience", re.compile(

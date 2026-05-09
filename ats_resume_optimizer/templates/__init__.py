@@ -137,6 +137,11 @@ Use the class names shown below so the selected theme CSS can style them.
     </div>
 </div>
 
+Skill subheadings/categories such as "Languages and Frameworks", "Cloud",
+"DevOps", "Databases", "Tools", "Methodologies", or "Libraries" MUST stay
+inside the single Skills section as `.skill-category` blocks. Do NOT create
+separate `.resume-section` blocks for skill categories.
+
 <div class="resume-section experience">
     <h2>Professional Experience</h2>
     <div class="experience-item">

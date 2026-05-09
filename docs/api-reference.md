@@ -152,7 +152,7 @@ Return an OpenAI client. Uses the provided `api_key`, or falls back to the `OPEN
 ```python
 def extract_jd_keywords(
     jd_text: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
 ) -> dict
 ```
@@ -223,7 +223,7 @@ Construct the initial user prompt containing the resume text, job description, p
 def optimize_resume_once(
     client: OpenAI,
     messages: list[dict],
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
 ) -> dict
 ```
 
@@ -245,7 +245,7 @@ def optimize_until_target(
     target_score: int = 95,
     max_iterations: int = 5,
     primary_color: str = "#2563eb",
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
 ) -> dict
@@ -273,7 +273,7 @@ Iteratively call the LLM, refining missing keywords with priority-aware prompts,
 ```python
 def extract_title_and_company(
     jd_text: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     api_key: str | None = None,
 ) -> tuple[str, str]
 ```

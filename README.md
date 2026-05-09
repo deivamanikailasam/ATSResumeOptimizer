@@ -1,6 +1,6 @@
 # ATS Resume Optimizer
 
-An AI-powered resume optimization tool that tailors your resume to specific job descriptions, maximizing Applicant Tracking System (ATS) compatibility. Built with OpenAI GPT-4o-mini, Streamlit, and Playwright.
+An AI-powered resume optimization tool that tailors your resume to specific job descriptions, maximizing Applicant Tracking System (ATS) compatibility. Built with OpenAI GPT-5.5, Streamlit, and Playwright.
 
 ## Documentation
 
@@ -16,7 +16,7 @@ An AI-powered resume optimization tool that tailors your resume to specific job 
 
 ## Features
 
-- **AI-Driven Optimization** — Uses GPT-4o-mini to rewrite and tailor resume content to match job description keywords, phrasing, and requirements.
+- **AI-Driven Optimization** — Uses GPT-5.5 to rewrite and tailor resume content to match job description keywords, phrasing, and requirements.
 - **Structured JD Analysis** — Pre-extracts keywords from the job description (required hard/soft skills, preferred skills, industry terms, action verbs, certifications) and categorizes them as must-have vs. preferred before optimization begins.
 - **14 ATS Optimization Strategies** — Applies research-backed strategies per iteration: Job Title Mirroring, Keyword Frequency Optimization, Semantic Skill Clustering, Action Verb Matching, Experience Alignment, Soft Skills Integration, Acronym Expansion, STAR Method Bullets, Must-Have Prioritization, Contextual Keyword Embedding, Skills Ordering by Relevance, Exact Phrase Matching, Quantified Achievements, and Date Format Consistency.
 - **Programmatic Keyword Verification** — After each iteration, programmatically checks the generated resume against all extracted JD keywords, producing a verified match percentage independent of the LLM's self-assessed score.
@@ -78,7 +78,7 @@ Job Description ──► URL scraping (requests + BS4) or raw text
                         │
                         ▼
               LLM Optimization Loop
-              (GPT-4o-mini, up to N iterations)
+              (GPT-5.5, up to N iterations)
                   ┌─────┴─────┐
                   │ Optimize   │◄── Keyword checklist
                   │ with       │◄── ATS scoring rubric
@@ -107,7 +107,7 @@ Job Description ──► URL scraping (requests + BS4) or raw text
 ## Prerequisites
 
 - **Python 3.12+**
-- **OpenAI API key** — requires access to `gpt-4o-mini` (or another chat model)
+- **OpenAI API key** — requires access to `gpt-5.5` (or another chat model)
 - **Chromium for Playwright** — installed via `playwright install chromium`
 
 ## Installation
@@ -272,7 +272,7 @@ All file paths are configured in `ats_resume_optimizer/config.py`:
 2. **Job Description Parsing** — If a URL is provided, the page is fetched with `requests` and parsed with BeautifulSoup using platform-specific selectors (Greenhouse, Lever, Workday, LinkedIn, Indeed, etc.). EEO boilerplate is stripped. Direct text input is used as-is.
 3. **JD Keyword Extraction** — A dedicated LLM call (`extract_jd_keywords()`) analyzes the job description and extracts structured, prioritized keyword data: required hard skills, required soft skills, preferred skills, experience requirements, education, key responsibilities, industry terms, action verbs, and certifications.
 4. **Title & Company Extraction** — A lightweight LLM call extracts the job title and company name for use in the output filename.
-5. **Iterative ATS Optimization** — The resume text, job description, and pre-extracted keyword checklist are sent to GPT-4o-mini with a research-backed system prompt. The model applies up to 14 named ATS strategies and returns:
+5. **Iterative ATS Optimization** — The resume text, job description, and pre-extracted keyword checklist are sent to GPT-5.5 with a research-backed system prompt. The model applies up to 14 named ATS strategies and returns:
    - Tailored resume HTML (using semantic class names matching the template system)
    - An ATS score (0–100) based on a defined scoring rubric
    - A list of still-missing keywords
