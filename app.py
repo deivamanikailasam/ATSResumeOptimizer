@@ -1198,17 +1198,27 @@ with tab_edit:
         qe_results.empty()
 
         with qe_results.container():
-            with st.spinner("Converting resume to themed HTML…"):
+            _qe_status = st.empty()
+            _qe_status.info("⏳ Step 1/3 — Extracting resume text…")
+
+            def _qe_on_status(msg: str) -> None:
+                _qe_status.info(f"⏳ {msg}")
+
+            with st.spinner("Loading resume faithfully…"):
                 try:
                     result = convert_resume(
                         base_resume_pdf=_base_path,
                         primary_color=primary_color,
                         api_key=_api or None,
+                        on_status=_qe_on_status,
                     )
                 except Exception as e:
                     st.error(f"Conversion failed: {e}")
                     st.stop()
 
+            _qe_status.empty()
+
+            with st.spinner("Generating PDF…"):
                 try:
                     pdf_bytes, pdf_name = _rebuild_pdf(result["content_html"])
                 except Exception as e:

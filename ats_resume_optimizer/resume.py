@@ -102,10 +102,154 @@ _KNOWN_SECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
+def _is_letter_spaced_token(tok: str) -> bool:
+    """Return True if token looks like part of a letter-spaced word.
+
+    Tokens are 1–3 uppercase alpha characters:
+    - 1-char  → the common case ("E", "D", "U", "C", …)
+    - 2-char  → ligature pairs some PDF fonts keep as a single glyph
+                (e.g. "TA", "AT", "RY", "TI")
+    - 3-char  → larger kerning groups some fonts emit as one unit
+                (e.g. "AWA" from "AWARDS", "CER" from "CERTIFICATIONS",
+                 "PRO" from "PROFESSIONAL")
+    All must be strictly uppercase so common lowercase words ("the", "a")
+    never trigger detection.
+    """
+    return 1 <= len(tok) <= 3 and tok.isalpha() and tok == tok.upper()
+
+
+def _collapse_letter_spaced_line(line: str) -> str:
+    """Collapse letter-spaced section-header text back into normal words.
+
+    Many PDFs apply decorative character spacing to section headers.
+    pypdf layout mode extracts these as space-separated tokens where each
+    token is 1–2 uppercase chars (ligature pairs stay together):
+
+        "PROFESSIONAL S U M M A RY"   → "PROFESSIONAL SUMMARY"
+        "N O TA B L E PROJECTS"       → "NOTABLE PROJECTS"
+        "E D U C AT I O N"            → "EDUCATION"
+
+    Algorithm:
+    - Scan tokens left-to-right (splitting on every single space, so
+      double-space gaps produce an empty-string token that acts as a
+      natural sequence breaker).
+    - Accumulate consecutive 1–2 uppercase-alpha tokens into a run.
+    - When the run ends, collapse it into one word if it is ≥ 3 tokens
+      long AND produces a result of ≥ 4 characters.  The dual threshold
+      avoids merging legitimate short runs like "I", "A", "UK US".
+    - Non-letter-spaced tokens (normal words, punctuation, numbers) are
+      passed through unchanged.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return line
+
+    tokens = stripped.split(" ")          # NB: double-space → empty string token
+    result: list[str] = []
+    run: list[str] = []
+
+    def _flush_run() -> None:
+        collapsed = "".join(run)
+        # Collapse only when: ≥4 tokens AND result is ≥4 chars.
+        # The 4-token floor stops 3-letter abbreviation triplets
+        # (e.g. "API REST SQL") from merging into one mangled word.
+        if len(run) >= 4 and len(collapsed) >= 4:
+            result.append(collapsed)
+        else:
+            result.extend(run)
+        run.clear()
+
+    for tok in tokens:
+        if _is_letter_spaced_token(tok):
+            run.append(tok)
+        else:
+            if run:
+                _flush_run()
+            result.append(tok)
+
+    if run:
+        _flush_run()
+
+    leading = len(line) - len(line.lstrip())
+    # Filter out empty-string artefacts from double-space splits before joining.
+    words = [t for t in result if t != ""]
+    return " " * leading + " ".join(words)
+
+
+def _normalize_layout_text(text: str) -> str:
+    """Remove visual-positioning artifacts left by pypdf's layout extraction.
+
+    Layout mode inserts spaces between characters and words to approximate
+    their horizontal positions on the page.  Those extra spaces pass through
+    verbatim into LLM prompts and produce broken spacing in the generated HTML.
+
+    Normalisation pipeline (order matters):
+    1. Collapse letter-spaced words FIRST, while 2-space word boundaries are
+       still intact (e.g. "E X P E R I E N C E" → "EXPERIENCE").
+    2. Collapse any remaining run of 2+ spaces on a line to one space.
+    3. Strip trailing whitespace.
+    4. Strip leading bullet/list characters from each line — these are PDF
+       rendering artefacts that become double-bullets when the LLM wraps
+       the same text inside <li> tags.
+    5. Collapse runs of 3+ consecutive blank lines to one blank line
+       (keeps meaningful section breaks without visual padding noise).
+    """
+    lines = text.split("\n")
+
+    # Step 1 — fix letter-spaced section headers before multi-space collapse.
+    lines = [_collapse_letter_spaced_line(line) for line in lines]
+
+    # Step 2 & 3 — collapse remaining multi-spaces and strip trailing space.
+    cleaned: list[str] = [re.sub(r" {2,}", " ", ln).rstrip() for ln in lines]
+
+    # Step 4 — strip leading bullet/list characters.
+    # These are visual markers in the PDF that HTML <li> already provides.
+    # We deliberately exclude "-" and "*" because they appear legitimately
+    # inside dates ("Jan 2020 - Mar 2022") and emphasis text.
+    _BULLET_CHARS = re.compile(r"^[\s]*[•·◦▪▸▹►▶●○◉‣⁃–—]\s*")
+    cleaned = [_BULLET_CHARS.sub("", ln) for ln in cleaned]
+
+    # Step 5 — deduplicate consecutive blank lines.
+    result: list[str] = []
+    blank_run = 0
+    for line in cleaned:
+        if not line.strip():
+            blank_run += 1
+            if blank_run <= 1:
+                result.append("")
+        else:
+            blank_run = 0
+            result.append(line)
+
+    return "\n".join(result)
+
+
+def _extract_page_text(page) -> str:
+    """Extract text from a single PDF page, preserving visual reading order.
+
+    Strategy:
+    1. Use layout mode — sorts characters by Y/X visual position so sections
+       appear top-to-bottom as seen on screen (fixes mis-ordered sections).
+    2. Normalize the layout-mode output to remove extra spaces that the mode
+       inserts for visual character alignment (fixes word/sentence spacing).
+    3. Fall back to plain extraction if layout mode returns nothing.
+    """
+    try:
+        text = page.extract_text(extraction_mode="layout") or ""
+        if text.strip():
+            return _normalize_layout_text(text)
+    except Exception:
+        pass
+    return page.extract_text() or ""
+
+
 def extract_resume_text(pdf_path: Path) -> str:
-    """Extract text from a resume PDF. Raises ValueError if no text is found."""
+    """Extract text from a resume PDF in visual reading order.
+
+    Raises ValueError if no text is found (e.g. scanned/image-only PDF).
+    """
     reader = PdfReader(str(pdf_path))
-    pages_text = [page.extract_text() or "" for page in reader.pages]
+    pages_text = [_extract_page_text(page) for page in reader.pages]
     resume_text = "\n".join(pages_text).strip()
     if not resume_text:
         raise ValueError(

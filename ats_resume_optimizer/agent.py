@@ -5,6 +5,7 @@ from typing import Callable
 
 from ats_resume_optimizer.job_description import get_job_description
 from ats_resume_optimizer.llm import (
+    clean_resume_html,
     convert_resume_to_html,
     edit_resume_html,
     extract_jd_keywords,
@@ -105,13 +106,12 @@ def convert_resume(
         on_status("Analyzing resume structure...")
     resume_analysis = analyze_resume_structure(resume_text)
 
-    if on_status:
-        on_status("Converting resume to HTML...")
     content_html = convert_resume_to_html(
         resume_text,
         primary_color=primary_color,
         api_key=api_key,
         resume_analysis=resume_analysis,
+        on_status=on_status,
     )
 
     return {"content_html": content_html}
@@ -141,7 +141,13 @@ def export_resume_pdf(
     primary_color: str,
     company: str | None = None,
 ) -> Path:
-    """Render cached content HTML with a template and export to PDF."""
+    """Render cached content HTML with a template and export to PDF.
+
+    Applies clean_resume_html() before rendering so that artefacts from
+    any source (initial load, AI edits, ATS optimiser) are removed from
+    every PDF that is downloaded — not just those from the load path.
+    """
+    content_html = clean_resume_html(content_html)
     full_html = render_resume(template_id, content_html, primary_color)
     candidate_name = extract_name_from_html(content_html)
     output_path = build_output_path(candidate_name, company=company)

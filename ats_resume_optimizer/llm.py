@@ -6,6 +6,7 @@ import re
 from html.parser import HTMLParser
 from typing import Callable
 
+from bs4 import BeautifulSoup, NavigableString
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -206,7 +207,7 @@ def verify_keyword_coverage(html_content: str, jd_keywords: dict) -> dict:
 
 def extract_jd_keywords(
     jd_text: str,
-    model: str = "gpt-5.5",
+    model: str = "gpt-4o-mini",
     api_key: str | None = None,
 ) -> dict:
     """Extract structured, prioritized keywords from a job description."""
@@ -787,7 +788,7 @@ Return the updated JSON object in the same format:
 def optimize_resume_once(
     client: OpenAI,
     messages: list[dict],
-    model: str = "gpt-5.5",
+    model: str = "gpt-4o-mini",
 ) -> dict:
     """Run one LLM call with the given message history. Returns parsed JSON."""
     resp = _create_chat_completion(
@@ -817,7 +818,7 @@ def optimize_until_target(
     target_score: int = 95,
     max_iterations: int = 15,
     primary_color: str = "#2563eb",
-    model: str = "gpt-5.5",
+    model: str = "gpt-4o-mini",
     api_key: str | None = None,
     on_iteration: Callable[[dict], None] | None = None,
     on_status: Callable[[str], None] | None = None,
@@ -1015,7 +1016,7 @@ def optimize_until_target(
 
 def extract_title_and_company(
     jd_text: str,
-    model: str = "gpt-5.5",
+    model: str = "gpt-4o-mini",
     api_key: str | None = None,
 ) -> tuple[str, str]:
     """Extract job title and company name from job description using LLM."""
@@ -1052,52 +1053,133 @@ JOB DESCRIPTION:
 
 # ---------------------------------------------------------------------------
 # Resume-to-HTML conversion (no optimization, faithful formatting)
+# Two-phase approach: (1) extract structured JSON verbatim, (2) format to HTML.
+# Separating extraction from formatting prevents the LLM from rephrasing or
+# missing content when it has to do both tasks simultaneously.
 # ---------------------------------------------------------------------------
 
-_CONVERT_SYSTEM_PROMPT = """\
-You are an expert resume formatter and HTML specialist.
-You convert resume text into well-structured semantic HTML using the
-exact CSS class names provided, preserving ALL original content faithfully.
+_EXTRACT_SYSTEM_PROMPT = """\
+You are a precise data extraction specialist. Your only task is to copy
+resume content into a structured JSON format.
 
-Rules:
-- Convert the resume text AS-IS into the HTML structure. Do NOT modify,
-  add, remove, or rephrase any content.
-- Preserve the original section order, bullet points, dates, company
-  names, job titles, skills, and education exactly as they appear.
+CRITICAL rules:
+- Copy ALL text VERBATIM. Do NOT paraphrase, summarize, rephrase, add,
+  or remove ANY content.
+- Every job title, company name, date, location, bullet point, skill,
+  degree, and metric must appear in the output EXACTLY as written.
+- Preserve the EXACT section order from the source text. Do NOT reorder
+  sections to match a "standard" resume format — output sections in the
+  same sequence they appear in the input.
+- When populating "bullets", "items", or any list field, strip any
+  leading bullet/list character (•, ·, ▪, –, —, *, -, etc.) from the
+  start of each item's text.  These are PDF rendering artefacts; the
+  HTML <li> element provides the visual marker.
+- For skill items: each individual skill/technology/tool MUST be its
+  own separate string in the "skills" array — exactly one entry per
+  skill, matching the boundaries from the original resume.  If the
+  resume lists skills separated by spaces without commas (e.g.
+  "TypeScript JavaScript React"), split them into individual array
+  items: ["TypeScript", "JavaScript", "React"].  Multi-word skill names
+  that form a single concept (e.g. "Material UI", "Angular (Latest)",
+  "Node.js", "Tailwind CSS") stay as one item.  Skills with
+  parenthetical sub-details are ONE item — do NOT split on commas
+  inside parentheses, e.g. "GenAI (LLMs,RAG,embeddings,LangChain)"
+  must remain a single array entry, not be split into GenAI, LLMs,
+  RAG, etc.  Never concatenate multiple distinct skills into a single
+  array entry.
+- Do not infer or invent any information not present in the text.
+"""
+
+_FORMAT_SYSTEM_PROMPT = """\
+You are an expert HTML formatter for resumes. You receive a structured
+JSON representation of a resume and convert it to semantic HTML using the
+exact CSS class names provided.
+
+CRITICAL rules:
+- Use the structured data AS-IS. Do NOT modify, rephrase, or add any
+  content.
+- Copy ALL text values VERBATIM from the input JSON into the HTML.
+- Output sections in the EXACT order they appear in the JSON "sections"
+  array. Do NOT reorder sections to match any assumed resume convention.
 - Use the provided HTML structure and CSS class names precisely.
 - Do NOT add <html>, <head>, <body>, or <style> tags.
-- Identify and format sections correctly (Summary, Skills, Experience,
-  Education, Projects, Certifications, and any others present).
-- For skills, group them into logical categories based on how they
-  appear in the original resume.
-- Use consistent date formatting: "Mon YYYY - Mon YYYY".
+- Do NOT add any inline style="" attributes — all styling is handled by
+  the external template CSS.
+- Do NOT insert extra <br> tags for spacing — use only the semantic
+  block elements defined in the structure (<div>, <ul>, <li>, <p>).
+- Do NOT add extra whitespace or blank lines inside text nodes — the
+  template CSS controls all spacing and line-height.
 """
 
 
-def convert_resume_to_html(
+def _extract_resume_structured(
     resume_text: str,
-    primary_color: str = "#2563eb",
-    model: str = "gpt-5.5",
-    api_key: str | None = None,
-    resume_analysis: dict | None = None,
-) -> str:
-    """Convert resume text to structured HTML without any ATS optimization."""
-    client = get_client(api_key)
-    content_structure = build_content_structure(resume_analysis)
+    client: OpenAI,
+    model: str = "gpt-4o-mini",
+) -> dict:
+    """Phase 1: Extract resume text into a structured JSON with verbatim content.
 
+    Locks down the content before any formatting happens, preventing the
+    formatter from rephrasing or dropping information.
+    """
     prompt = f"""\
-Convert the following resume text into HTML using the exact structure below.
-Preserve ALL content faithfully — do not add, remove, or modify anything.
-Just format it into the proper HTML structure.
+Extract the following resume into a structured JSON object.
 
-**HTML structure to use:**
-{content_structure}
+CRITICAL: Copy all text VERBATIM — do not change, rephrase, summarize,
+or omit any content. Every job title, company name, date, bullet point,
+skill, and description must appear EXACTLY as written in the original.
 
-The accent color is {primary_color} — no inline styles needed; the
-template CSS handles colors automatically.
+Return a JSON object with this structure:
+{{
+  "name": "Full name exactly as written",
+  "contact": {{
+    "email": "email or null",
+    "phone": "phone or null",
+    "location": "city/state/country or null",
+    "linkedin": "linkedin URL or handle or null",
+    "github": "github URL or handle or null",
+    "website": "personal website or null",
+    "other": ["any other contact line items"]
+  }},
+  "sections": [
+    {{
+      "id": "lowercase_identifier",
+      "heading": "Exact heading text as it appears in the resume",
+      "type": "one of: summary|skills|experience|education|projects|certifications|other",
+      "content": "verbatim paragraph text (for summary/other free-text sections)",
+      "items": [
+        // experience items:
+        // {{"title": "verbatim", "company": "verbatim", "location": "verbatim or null",
+        //   "dates": "verbatim", "bullets": ["verbatim bullet 1", ...]}}
+        //
+        // education items:
+        // {{"degree": "verbatim", "school": "verbatim", "location": "verbatim or null",
+        //   "dates": "verbatim or null", "details": ["verbatim detail"]}}
+        //
+        // project items:
+        // {{"name": "verbatim", "dates": "verbatim or null",
+        //   "description": "verbatim", "bullets": ["verbatim"]}}
+        //
+        // skill items:
+        // {{"category": "verbatim category name", "skills": ["skill1", "skill2"]}}
+        //
+        // certification items:
+        // {{"name": "verbatim", "issuer": "verbatim or null", "date": "verbatim or null"}}
+        //
+        // other items:
+        // {{"text": "verbatim line or item"}}
+      ]
+    }}
+  ]
+}}
 
-**Return a single JSON object with exactly this key:**
-- "resume_html": the full resume as HTML following the structure above.
+Include ALL sections present in the resume in the EXACT order they
+appear in the text — do NOT reorder sections based on any assumed
+"standard" resume format. The order in the JSON must match the order
+in the source text.
+
+If a section has both free-text content and list items, populate both
+"content" and "items" fields.
 
 RESUME TEXT:
 \"\"\"{resume_text}\"\"\"
@@ -1106,15 +1188,351 @@ RESUME TEXT:
         client,
         model=model,
         messages=[
-            {"role": "system", "content": _CONVERT_SYSTEM_PROMPT},
+            {"role": "system", "content": _EXTRACT_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.1,
+        temperature=0,
+    )
+    data = _parse_json_from_content(resp.choices[0].message.content)
+    if not isinstance(data, dict) or "sections" not in data:
+        raise RuntimeError(
+            "Structured extraction did not return expected JSON format."
+        )
+    return data
+
+
+def _format_structured_resume_to_html(
+    resume_data: dict,
+    content_structure: str,
+    primary_color: str,
+    client: OpenAI,
+    model: str = "gpt-4o-mini",
+) -> str:
+    """Phase 2: Convert structured resume JSON to HTML.
+
+    Because the content is already locked into the JSON, the LLM only
+    needs to decide how to apply HTML tags — not interpret raw text.
+    """
+    prompt = f"""\
+Convert the following structured resume data into HTML using the exact
+structure below. Copy ALL text values VERBATIM from the JSON — do not
+change any words, dates, or descriptions.
+
+**HTML structure to use:**
+{content_structure}
+
+The accent color is {primary_color} — no inline styles needed; the
+template CSS handles all fonts, sizes, colors, and spacing automatically.
+
+**Formatting rules:**
+- No inline style="" attributes anywhere.
+- No extra <br> tags — use only the semantic block elements from the
+  structure above.
+- No extra whitespace inside text nodes (e.g. no leading/trailing spaces
+  inside <li> or <p>).
+- Section order must match the JSON "sections" array exactly.
+- Skills: EVERY item in the JSON "skills" array MUST become its own
+  SEPARATE <span class="skill-tag">SkillName</span> element.
+  If the JSON has ["TypeScript","React","Next.js"], output:
+      <span class="skill-tag">TypeScript</span>
+      <span class="skill-tag">React</span>
+      <span class="skill-tag">Next.js</span>
+  NEVER concatenate multiple skills into one span. NEVER put skills as
+  comma-separated bare text — each skill = one span, always.
+- Do NOT include bullet characters (•, -, *, etc.) inside <li> text —
+  the CSS list-style provides the bullet automatically.
+
+**RESUME DATA (JSON):**
+```json
+{json.dumps(resume_data, indent=2, ensure_ascii=False)}
+```
+
+**Return a single JSON object with exactly this key:**
+- "resume_html": the full resume as HTML following the structure above.
+"""
+    resp = _create_chat_completion(
+        client,
+        model=model,
+        messages=[
+            {"role": "system", "content": _FORMAT_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
     )
     data = _parse_json_from_content(resp.choices[0].message.content)
     if not isinstance(data, dict) or "resume_html" not in data:
         raise RuntimeError("Model did not return the expected JSON format.")
     return data["resume_html"]
+
+
+def _split_on_top_level_delimiters(text: str) -> list[str]:
+    """Split text on commas, semicolons, or pipes that are NOT inside parentheses.
+
+    This keeps parenthetical sub-lists as part of the parent skill, e.g.:
+        "GenAI (LLMs,RAG,embeddings,LangChain)"  → one item
+        "Python, JavaScript, React"               → three items
+    """
+    items: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+            current.append(ch)
+        elif ch in ")]}":
+            depth = max(depth - 1, 0)
+            current.append(ch)
+        elif ch in ",;|" and depth == 0:
+            item = "".join(current).strip()
+            if item:
+                items.append(item)
+            current = []
+        else:
+            current.append(ch)
+    tail = "".join(current).strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _skills_from_text(text: str) -> list[str]:
+    """Split a skill list text into individual skill names.
+
+    Only splits on explicit top-level delimiters (comma, semicolon, pipe).
+    Delimiters inside parentheses are treated as part of the skill name,
+    so "GenAI (LLMs,RAG,embeddings,LangChain)" stays as a single item.
+
+    Space-separated skill lists without any delimiter are NOT split here —
+    that boundary information must come from Phase 1 JSON extraction where
+    the LLM identifies each skill from context.  Guessing at space-
+    separated boundaries causes incorrect splits for multi-word skills
+    like "Material UI", "Angular (Latest)", etc.
+    """
+    stripped = text.strip().lstrip(":").strip()
+    if not stripped:
+        return []
+    if re.search(r"[,;|]", stripped):
+        return [s for s in _split_on_top_level_delimiters(stripped) if s]
+    return [stripped]
+
+
+def _replace_skill_tags(div, soup: BeautifulSoup, skills: list[str]) -> None:
+    """Remove existing skill-tag spans in div and add one span per skill."""
+    for tag in div.find_all(class_="skill-tag"):
+        tag.extract()
+    # Clean up leftover whitespace-only text nodes after the strong label.
+    strong = div.find("strong")
+    if strong:
+        # Snapshot siblings before mutating the tree during iteration.
+        for node in [*strong.next_siblings]:
+            if isinstance(node, NavigableString) and not node.strip():
+                node.extract()
+    for i, skill in enumerate(skills):
+        if i > 0:
+            div.append(NavigableString(" "))
+        span = soup.new_tag("span")
+        span["class"] = "skill-tag"
+        span.string = skill
+        div.append(span)
+
+
+def _fix_skill_categories(html: str) -> str:
+    """Ensure each skill in .skill-category elements is its own skill-tag span.
+
+    Handles three common LLM failure modes:
+
+    A) No skill-tag spans at all — skills are a plain text node:
+           <strong>Languages:</strong> Python, JavaScript, React
+
+    B) A single skill-tag span containing comma-separated multiple skills:
+           <span class="skill-tag">Python, JavaScript, React</span>
+
+    C) A single skill-tag span containing space-separated multiple skills
+       (no explicit delimiter), e.g.:
+           <span class="skill-tag">TypeScript React Angular (Latest) Next.js</span>
+
+    All three patterns are rewritten to individual per-skill spans.
+    """
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return html
+
+    modified = False
+
+    for div in soup.find_all(class_="skill-category"):
+        existing_tags = div.find_all(class_="skill-tag")
+        strong = div.find("strong")
+
+        if not existing_tags:
+            # ── Case A: plain text, no spans yet ──────────────────────────
+            if strong:
+                text_nodes = [
+                    n for n in strong.next_siblings
+                    if isinstance(n, NavigableString)
+                ]
+            else:
+                text_nodes = [
+                    n for n in div.children
+                    if isinstance(n, NavigableString)
+                ]
+            raw = "".join(str(n) for n in text_nodes)
+            skills = _skills_from_text(raw)
+            if len(skills) < 1:
+                continue
+            for node in text_nodes:
+                node.extract()
+            for i, skill in enumerate(skills):
+                if i > 0:
+                    div.append(NavigableString(" "))
+                span = soup.new_tag("span")
+                span["class"] = "skill-tag"
+                span.string = skill
+                div.append(span)
+            modified = True
+
+        else:
+            # ── Case B: already has spans — fix only when explicit delimiter
+            #    (comma/semicolon/pipe) is found inside a span.  Space-only
+            #    spans are left untouched: their correct split boundaries
+            #    must come from Phase 1 JSON extraction, not from guessing.
+            all_skills: list[str] = []
+            needs_fix = False
+
+            for tag in existing_tags:
+                tag_text = tag.get_text().strip()
+                if re.search(r"[,;|]", tag_text):
+                    parts = _skills_from_text(tag_text)
+                    all_skills.extend(parts)
+                    if len(parts) > 1:
+                        needs_fix = True
+                else:
+                    if tag_text:
+                        all_skills.append(tag_text)
+
+            if not needs_fix:
+                continue
+
+            skills = [s for s in all_skills if s]
+            if not skills:
+                continue
+
+            _replace_skill_tags(div, soup, skills)
+            modified = True
+
+    if not modified:
+        return html
+
+    return str(soup)
+
+
+_SPACING_CSS_PROPS = {
+    "margin",
+    "margin-top",
+    "margin-bottom",
+    "margin-left",
+    "margin-right",
+    "padding",
+    "padding-top",
+    "padding-bottom",
+    "padding-left",
+    "padding-right",
+    "gap",
+    "row-gap",
+    "column-gap",
+    "line-height",
+}
+
+
+def _filter_style_attr(m: re.Match) -> str:
+    """Keep only spacing-related CSS declarations from an inline style attribute.
+
+    Non-spacing properties (font, color, background, etc.) are stripped so
+    they cannot override the template CSS. Spacing properties (margin,
+    padding, gap, line-height) are preserved so user-requested spacing
+    edits survive PDF export.
+    """
+    style_value = m.group(1)
+    kept = []
+    for decl in style_value.split(";"):
+        decl = decl.strip()
+        if not decl:
+            continue
+        prop = decl.split(":")[0].strip().lower()
+        if prop in _SPACING_CSS_PROPS:
+            kept.append(decl)
+    if kept:
+        return f' style="{"; ".join(kept)}"'
+    return ""
+
+
+def clean_resume_html(html: str) -> str:
+    """Sanitise LLM-generated resume HTML before PDF export or preview.
+
+    Applied to every content_html that flows into a PDF — whether it came
+    from the initial load (convert_resume_to_html), an AI edit
+    (edit_resume_html), or the ATS optimiser (optimize_until_target).
+
+    Fixes applied:
+    1. Inline style="" attributes — strip properties that override the
+       template CSS (font, color, background, etc.) while preserving
+       spacing properties (margin, padding, gap, line-height) so that
+       user-requested spacing edits survive PDF export.
+    2. Leading bullet glyphs inside <li> — PDF bullet chars copied
+       verbatim produce a double-bullet alongside the CSS list marker.
+    3. Comma-separated skill lists — skills not wrapped in individual
+       <span class="skill-tag"> elements are split and wrapped so the
+       template CSS renders them correctly.
+    """
+    # 1. Filter inline style attributes — preserve spacing, strip the rest.
+    html = re.sub(r'\s*style\s*=\s*"([^"]*)"', _filter_style_attr, html)
+    # 2. Remove leading bullet chars from <li> content.
+    html = re.sub(
+        r"(<li[^>]*>)\s*[•·◦▪▸▹►▶●○◉‣⁃–—]\s*",
+        r"\1",
+        html,
+    )
+    # 3. Split comma-separated skills into individual skill-tag spans.
+    html = _fix_skill_categories(html)
+    return html
+
+
+def convert_resume_to_html(
+    resume_text: str,
+    primary_color: str = "#2563eb",
+    model: str = "gpt-4o-mini",
+    api_key: str | None = None,
+    resume_analysis: dict | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> str:
+    """Convert resume text to structured HTML without any ATS optimization.
+
+    Uses a two-phase approach for faithful reproduction:
+    1. Extract a verbatim structured JSON representation of the resume.
+    2. Format the locked-down JSON into semantic HTML.
+
+    This separation prevents the single-pass problem where the LLM
+    simultaneously parses raw text and produces HTML, which causes it to
+    rephrase or drop content.
+    """
+    client = get_client(api_key)
+    content_structure = build_content_structure(resume_analysis)
+
+    if on_status:
+        on_status("Extracting resume content (verbatim)...")
+    resume_data = _extract_resume_structured(resume_text, client, model)
+
+    if on_status:
+        on_status("Formatting resume to HTML...")
+    html = _format_structured_resume_to_html(
+        resume_data=resume_data,
+        content_structure=content_structure,
+        primary_color=primary_color,
+        client=client,
+        model=model,
+    )
+
+    return clean_resume_html(html)
 
 
 # ---------------------------------------------------------------------------
@@ -1139,7 +1557,7 @@ def edit_resume_html(
     current_html: str,
     instruction: str,
     edit_history: list[dict] | None = None,
-    model: str = "gpt-5.5",
+    model: str = "gpt-4o-mini",
     api_key: str | None = None,
 ) -> dict:
     """Apply a natural-language edit instruction to the resume HTML.

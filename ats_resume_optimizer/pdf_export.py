@@ -50,11 +50,49 @@ _PAGE_BREAK_CSS = """\
 <style>
 /* ── Print optimizations (injected by pdf_export) ──────────────────────── */
 
+/* ── Section-level breaks ───────────────────────────────────────────────── */
+
 .resume-section {
     margin-bottom: 10px !important;
+    /* Allow breaks inside sections — they can be long (experience, skills). */
     break-inside: auto !important;
     page-break-inside: auto !important;
 }
+
+/* Small/compact sections should always stay on one page. */
+.resume-section.summary,
+.resume-section.certifications,
+.resume-section.languages,
+.resume-section.awards,
+.resume-section.volunteer,
+.resume-section.affiliations,
+.resume-section.interests,
+.resume-section.patents,
+.resume-section.publications {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+}
+
+/* ── Prevent section HEADER from stranding alone at page bottom ─────────── */
+
+/* The h2 itself must never be the last thing on a page. */
+h1, h2, h3 {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+}
+
+/* The element immediately following an h2 must not start a new page.
+   This creates a two-sided "glue" that keeps heading + first content block
+   together — Chromium respects this far more reliably than break-after alone. */
+h2 + div,
+h2 + ul,
+h2 + p,
+h2 + table {
+    break-before: avoid !important;
+    page-break-before: avoid !important;
+}
+
+/* ── Item-level breaks ──────────────────────────────────────────────────── */
 
 .experience-item,
 .education-item,
@@ -64,24 +102,46 @@ _PAGE_BREAK_CSS = """\
     page-break-inside: auto !important;
 }
 
-h1, h2, h3 {
-    break-after: avoid;
-    page-break-after: avoid;
-}
-
+/* Keep the role title / company line attached to its first bullet. */
 .item-header,
 .company {
-    break-after: avoid;
-    page-break-after: avoid;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
 }
 
 .experience-item ul,
 .education-item ul,
 .project-item p,
 .project-item ul {
-    break-before: avoid;
-    page-break-before: avoid;
+    break-before: avoid !important;
+    page-break-before: avoid !important;
 }
+
+/* ── Bullets & paragraphs ───────────────────────────────────────────────── */
+
+p, li {
+    orphans: 3;
+    widows: 3;
+}
+
+li {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+}
+
+/* ── Skills grid ────────────────────────────────────────────────────────── */
+
+.skills-grid {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+}
+
+.skill-category {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+}
+
+/* ── Misc ───────────────────────────────────────────────────────────────── */
 
 .resume-section:last-child,
 .experience-item:last-child,
@@ -91,32 +151,11 @@ h1, h2, h3 {
 }
 
 .resume-header {
-    page-break-after: avoid;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
 }
 
-p, li {
-    orphans: 2;
-    widows: 2;
-}
-
-li {
-    break-inside: avoid;
-    page-break-inside: avoid;
-}
-
-.cert-list,
-.skills-grid,
-.summary {
-    break-inside: auto !important;
-    page-break-inside: auto !important;
-}
-
-.skill-category {
-    break-inside: auto !important;
-    page-break-inside: auto !important;
-}
-
-/* ── Generic fallback for extra/custom sections ────────────────────────── */
+/* ── Generic fallback for extra / custom sections ───────────────────────── */
 .resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) {
     margin-bottom: 10px !important;
     break-inside: auto !important;
@@ -131,8 +170,8 @@ li {
     padding-bottom: 4px;
     margin-bottom: 8px;
     border-bottom: 1px solid #e0e0e0;
-    break-after: avoid;
-    page-break-after: avoid;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
 }
 
 .resume-section:not(.summary):not(.skills):not(.experience):not(.education):not(.projects):not(.certifications) ul {
